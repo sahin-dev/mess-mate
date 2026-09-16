@@ -81,6 +81,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="At least 8 characters"
+                suppressHydrationWarning
               />
               <button
                 type="button"
@@ -104,6 +105,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
                 placeholder="Type it again"
+                suppressHydrationWarning
               />
             </span>
           </label>

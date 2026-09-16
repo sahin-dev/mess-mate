@@ -44,6 +44,9 @@ export type MessDocument = {
   managerId: string;
   createdAt: string;
   settings: Record<string, unknown>;
+  /** Both added later, so both are optional on stored documents. */
+  property?: Record<string, unknown>;
+  facilities?: unknown[];
 };
 
 export class ApiError extends Error {
@@ -263,6 +266,44 @@ export async function setActiveWorkspace(
   await db
     .collection<SessionDocument>("sessions")
     .updateOne({ token: session.token }, { $set: { activeMessId: messId, role } });
+}
+
+/**
+ * Connects a session to whichever mess the user actually belongs to.
+ *
+ * A manager approving a request updates that user's sessions, but someone who
+ * signed in earlier, or on another device, still arrives with no active mess.
+ * Returns the membership if there is one.
+ */
+export async function adoptMembership(
+  db: Db,
+  session: SessionDocument,
+  user: UserDocument,
+) {
+  if (session.activeMessId && session.role) return null;
+  const membership = await db
+    .collection<{ messId: string; role: string; status: string; userId: string | null }>("members")
+    .findOne({ userId: user.id, status: "active" });
+  if (!membership) return null;
+  const role: UserRole = membership.role === "Manager" ? "manager" : "member";
+  await setActiveWorkspace(db, session, membership.messId, role);
+  return { messId: membership.messId, role };
+}
+
+/** The mess this user has asked to join, if a manager has yet to decide. */
+export async function pendingJoinRequest(db: Db, user: UserDocument) {
+  const request = await db
+    .collection<{ messId: string; joinedAt: string }>("members")
+    .findOne({ userId: user.id, status: "requested" });
+  if (!request) return null;
+  const mess = await db.collection<MessDocument>("messes").findOne({ id: request.messId });
+  if (!mess) return null;
+  return {
+    messId: mess.id,
+    messName: mess.name,
+    location: mess.location,
+    requestedAt: request.joinedAt,
+  };
 }
 
 export function newId(prefix: string) {

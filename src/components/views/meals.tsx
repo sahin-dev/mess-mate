@@ -9,6 +9,7 @@ import {
   Lock,
   Minus,
   Plus,
+  UserCog,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { downloadCsv, formatDate, formatMoney, pluralize } from "@/lib/format";
@@ -30,6 +31,14 @@ export function MealsView() {
   const today = todayInZone(timeZone);
   const keys = ALL_KEYS.filter((key) => data.settings.mealTypes[key]);
 
+  // Managers can fill in for someone who is away or does not use the app.
+  const activeMembers = data.members.filter((member) => member.status === "active");
+  const [subjectId, setSubjectId] = useState(data.workspace.userId);
+  const subject =
+    activeMembers.find((member) => member.id === subjectId) ??
+    activeMembers.find((member) => member.id === data.workspace.userId);
+  const recordingForSelf = !subject || subject.id === data.workspace.userId;
+
   const days = useMemo(() => {
     const total = daysInPeriod(data.period);
     return Array.from({ length: total }, (_, index) => `${data.period}-${String(index + 1).padStart(2, "0")}`);
@@ -44,23 +53,24 @@ export function MealsView() {
   const goToOffset = (next: number) =>
     setPagedTo({ period: data.period, offset: Math.max(0, Math.min(days.length - PAGE_SIZE, next)) });
 
-  const savedByDate = useMemo(
-    () => new Map(data.meals.map((entry) => [entry.date, entry])),
-    [data.meals],
-  );
+  const subjectMeals = data.memberMeals[subject?.id ?? data.workspace.userId] ?? data.meals;
+  const savedByDate = new Map(subjectMeals.map((entry) => [entry.date, entry]));
 
   /**
    * Edits are collected locally and written per day. Sending one request per
    * tap made every click wait for a full workspace reload.
    */
-  const [draftState, setDraftState] = useState<{ period: string; days: Record<string, Counts> }>({
-    period: data.period,
-    days: {},
-  });
-  // Drafts belong to one month; switching the picker discards them by mismatch
-  // rather than by clearing them from an effect.
-  const drafts = draftState.period === data.period ? draftState.days : {};
-  const setDrafts = (days: Record<string, Counts>) => setDraftState({ period: data.period, days });
+  const [draftState, setDraftState] = useState<{
+    period: string;
+    subjectId: string;
+    days: Record<string, Counts>;
+  }>({ period: data.period, subjectId, days: {} });
+  // Drafts belong to one month and one person; changing either discards them
+  // by mismatch rather than by clearing them from an effect.
+  const draftsMatch = draftState.period === data.period && draftState.subjectId === subjectId;
+  const drafts = draftsMatch ? draftState.days : {};
+  const setDrafts = (days: Record<string, Counts>) =>
+    setDraftState({ period: data.period, subjectId, days });
   const [savingDate, setSavingDate] = useState<string | null>(null);
   // Dates that just saved, so the row can confirm it briefly before going back
   // to showing the entry's status.
@@ -98,7 +108,7 @@ export function MealsView() {
     const draft = drafts[date];
     if (!draft) return;
     setSavingDate(date);
-    const result = await runAction("saveMeals", { date, meals: draft });
+    const result = await runAction("saveMeals", { date, meals: draft, memberId: subject?.id });
     setSavingDate(null);
     if (result) {
       setRecentlySaved((current) => [...current.filter((entry) => entry !== date), date]);
@@ -125,10 +135,10 @@ export function MealsView() {
     return ALL_KEYS.some((key) => drafts[date][key] !== (saved?.[key] ?? 0));
   });
 
-  const me = data.members.find((member) => member.id === data.workspace.userId);
+  const me = subject ?? data.members.find((member) => member.id === data.workspace.userId);
   const visible = days.slice(offset, offset + PAGE_SIZE);
   const exportMeals = () =>
-    downloadCsv(`messmate-meals-${data.period}.csv`, [
+    downloadCsv(`messmate-meals-${subject?.name ?? "me"}-${data.period}.csv`, [
       ["Date", "Breakfast", "Lunch", "Dinner", "Total"],
       ...days.map((date) => {
         const entry = savedByDate.get(date);
@@ -141,7 +151,7 @@ export function MealsView() {
     <>
       <SectionHeading
         kicker={periodLabel(data.period).toUpperCase()}
-        title="My meal entries"
+        title={recordingForSelf ? "My meal entries" : `${subject?.name}'s meal entries`}
         description={
           data.settings.allowAnytime
             ? "Entries stay open all month."
@@ -175,11 +185,35 @@ export function MealsView() {
         }
       />
 
+      {isManager && activeMembers.length > 1 && (
+        <div className={`subject-picker ${recordingForSelf ? "" : "on-behalf"}`}>
+          <label>
+            <UserCog size={16} aria-hidden="true" />
+            <span>Recording for</span>
+            <select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
+              {activeMembers.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.id === data.workspace.userId ? `${member.name} (you)` : member.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!recordingForSelf && (
+            <span className="subject-warning">
+              Changes are saved to {subject?.name}&rsquo;s sheet and appear in the activity log.
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="meal-summary-banner">
         <div>
           <CookingPot size={25} aria-hidden="true" />
           <span>
-            <strong>{pluralize(me?.meals ?? 0, "meal")} this month</strong>
+            <strong>
+              {pluralize(me?.meals ?? 0, "meal")} this month
+              {recordingForSelf ? "" : ` for ${subject?.name.split(" ")[0]}`}
+            </strong>
             <small>
               {data.settlement.mealRate > 0
                 ? `${formatMoney(me?.mealCost ?? 0)} of food at ${formatMoney(data.settlement.mealRate, { decimals: true })} per meal`
@@ -214,7 +248,11 @@ export function MealsView() {
               {formatDate(visible[0], { day: "numeric", month: "short" })} &ndash;{" "}
               {formatDate(visible[visible.length - 1], { day: "numeric", month: "short" })}
             </h3>
-            <p>Your own breakfast, lunch and dinner counts</p>
+            <p>
+              {recordingForSelf
+                ? "Your own breakfast, lunch and dinner counts"
+                : `${subject?.name}'s breakfast, lunch and dinner counts`}
+            </p>
           </div>
           <div className="view-actions">
             <span className="entry-window">

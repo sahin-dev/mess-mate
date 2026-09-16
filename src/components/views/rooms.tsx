@@ -1,15 +1,17 @@
 "use client";
 
-import { Home, Plus, Trash2, UserMinus, UserPlus } from "lucide-react";
+import { Bath, Home, Pencil, Plus, Trash2, UserMinus, UserPlus, Wind } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { formatMoney, pluralize } from "@/lib/format";
-import type { Room } from "@/lib/types";
+import { FURNISHING_LABEL, roomHighlights } from "@/lib/property";
+import type { Furnishing, Room } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState, Modal, SectionHeading } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace-context";
 
 export function RoomsView() {
   const { data, runAction, busy, isManager, confirm } = useWorkspace();
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Room | null>(null);
   const [assigning, setAssigning] = useState<Room | null>(null);
 
   const rooms = data.rooms;
@@ -111,18 +113,37 @@ export function RoomsView() {
                       </p>
                     </div>
                     {isManager && (
-                      <button
-                        type="button"
-                        className="icon-action danger"
-                        disabled={busy || residents.length > 0}
-                        title={residents.length ? "Move the residents out first" : `Delete ${room.name}`}
-                        aria-label={`Delete ${room.name}`}
-                        onClick={() => removeRoom(room)}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="icon-action"
+                          disabled={busy}
+                          title={`Edit ${room.name}`}
+                          aria-label={`Edit ${room.name}`}
+                          onClick={() => setEditing(room)}
+                        >
+                          <Pencil size={16} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-action danger"
+                          disabled={busy || residents.length > 0}
+                          title={residents.length ? "Move the residents out first" : `Delete ${room.name}`}
+                          aria-label={`Delete ${room.name}`}
+                          onClick={() => removeRoom(room)}
+                        >
+                          <Trash2 size={16} aria-hidden="true" />
+                        </button>
+                      </div>
                     )}
                   </div>
+
+                  <ul className="room-features">
+                    {roomHighlights(room).map((feature) => (
+                      <li key={feature}>{feature}</li>
+                    ))}
+                  </ul>
+                  {room.notes && <p className="room-notes">{room.notes}</p>}
 
                   <div className="room-rent">
                     <span>Monthly rent</span>
@@ -181,7 +202,8 @@ export function RoomsView() {
         </div>
       )}
 
-      {adding && <AddRoomModal count={rooms.length} onClose={() => setAdding(false)} />}
+      {adding && <RoomModal count={rooms.length} onClose={() => setAdding(false)} />}
+      {editing && <RoomModal room={editing} count={rooms.length} onClose={() => setEditing(null)} />}
       {assigning && (
         <AssignModal room={assigning} candidates={unassigned} onClose={() => setAssigning(null)} />
       )}
@@ -189,29 +211,42 @@ export function RoomsView() {
   );
 }
 
-function AddRoomModal({ count, onClose }: { count: number; onClose: () => void }) {
+function RoomModal({
+  room,
+  count,
+  onClose,
+}: {
+  room?: Room;
+  count: number;
+  onClose: () => void;
+}) {
   const { runAction, busy } = useWorkspace();
   const [form, setForm] = useState({
-    name: `Room ${String.fromCharCode(65 + count)}`,
-    rent: "6000",
-    capacity: "2",
-    type: "Shared room",
+    name: room?.name ?? `Room ${String.fromCharCode(65 + count)}`,
+    rent: String(room?.rent ?? 6000),
+    capacity: String(room?.capacity ?? 2),
+    type: room?.type ?? "Shared room",
+    attachedBathroom: room?.attachedBathroom ?? false,
+    balcony: room?.balcony ?? false,
+    airConditioned: room?.airConditioned ?? false,
+    furnishing: (room?.furnishing ?? "unfurnished") as Furnishing,
+    notes: room?.notes ?? "",
   });
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const result = await runAction(
-      "addRoom",
-      { ...form, rent: Number(form.rent), capacity: Number(form.capacity) },
-      `${form.name} added.`,
+      room ? "updateRoom" : "addRoom",
+      { id: room?.id, ...form, rent: Number(form.rent), capacity: Number(form.capacity) },
+      room ? `${form.name} updated.` : `${form.name} added.`,
     );
     if (result) onClose();
   };
 
   return (
     <Modal
-      title="Add a room"
-      subtitle="Set the rent and how many people it sleeps. Assign members afterwards."
+      title={room ? `Edit ${room.name}` : "Add a room"}
+      subtitle="Rent, size, and what the room itself has."
       onClose={onClose}
     >
       <form onSubmit={submit}>
@@ -258,15 +293,64 @@ function AddRoomModal({ count, onClose }: { count: number; onClose: () => void }
             maxLength={80}
             value={form.type}
             onChange={(event) => setForm({ ...form, type: event.target.value })}
-            placeholder="e.g. Balcony room"
+            placeholder="e.g. Master room"
           />
         </label>
+
+        <fieldset className="item-fieldset">
+          <legend>What the room has</legend>
+          <div className="feature-toggles">
+            {(
+              [
+                ["attachedBathroom", "Attached bathroom", Bath],
+                ["balcony", "Balcony", Home],
+                ["airConditioned", "Air conditioning", Wind],
+              ] as const
+            ).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                type="button"
+                className={form[key] ? "selected" : ""}
+                aria-pressed={form[key]}
+                onClick={() => setForm({ ...form, [key]: !form[key] })}
+              >
+                <Icon size={15} aria-hidden="true" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <label>
+          Furnishing
+          <select
+            value={form.furnishing}
+            onChange={(event) => setForm({ ...form, furnishing: event.target.value as Furnishing })}
+          >
+            {(Object.keys(FURNISHING_LABEL) as Furnishing[]).map((key) => (
+              <option key={key} value={key}>
+                {FURNISHING_LABEL[key]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Notes (optional)
+          <input
+            maxLength={300}
+            value={form.notes}
+            onChange={(event) => setForm({ ...form, notes: event.target.value })}
+            placeholder="e.g. 12 x 10 ft, south facing"
+          />
+        </label>
+
         <div className="modal-actions">
           <button type="button" className="button button-outline" onClick={onClose}>
             Cancel
           </button>
-          <ActionButton busy={busy} busyLabel="Creating…" type="submit">
-            Create room
+          <ActionButton busy={busy} busyLabel="Saving…" type="submit">
+            {room ? "Save room" : "Create room"}
           </ActionButton>
         </div>
       </form>

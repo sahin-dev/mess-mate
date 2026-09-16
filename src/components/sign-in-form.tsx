@@ -21,7 +21,7 @@ export function SignInForm({ demoEnabled }: { demoEnabled: boolean }) {
 
   const go = (response: AuthResponse) => {
     // A brand-new account has no mess yet, so it goes to the join step.
-    router.replace(response.workspace ? "/" : "/join");
+    router.replace(response.workspace ? "/dashboard" : "/join");
     router.refresh();
   };
 
@@ -98,7 +98,14 @@ export function SignInForm({ demoEnabled }: { demoEnabled: boolean }) {
               Full name
               <span className="input-with-icon">
                 <Users size={17} aria-hidden="true" />
-                <input name="name" required maxLength={80} autoComplete="name" placeholder="Your full name" />
+                <input
+                  name="name"
+                  required
+                  maxLength={80}
+                  autoComplete="name"
+                  placeholder="Your full name"
+                  suppressHydrationWarning
+                />
               </span>
             </label>
           )}
@@ -115,6 +122,7 @@ export function SignInForm({ demoEnabled }: { demoEnabled: boolean }) {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@example.com"
+                suppressHydrationWarning
               />
             </span>
           </label>
@@ -137,6 +145,7 @@ export function SignInForm({ demoEnabled }: { demoEnabled: boolean }) {
                 minLength={mode === "signup" ? 8 : undefined}
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
                 placeholder={mode === "signup" ? "At least 8 characters" : "Enter your password"}
+                suppressHydrationWarning
               />
               <button
                 type="button"

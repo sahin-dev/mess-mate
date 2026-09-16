@@ -27,7 +27,7 @@ export default function Error({
         <button className="button button-dark" onClick={retry}>
           Try again
         </button>
-        <Link className="button button-outline" href="/">
+        <Link className="button button-outline" href="/dashboard">
           Back to your mess
         </Link>
       </div>

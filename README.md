@@ -61,30 +61,42 @@ pnpm run seed        # create database indexes
 Every variable is documented in [`.env.example`](.env.example). Only
 `MONGODB_URI` is required.
 
-| Variable                   | Purpose                                                    |
-| -------------------------- | ---------------------------------------------------------- |
-| `MONGODB_URI`              | Connection string. Required.                                |
-| `MONGODB_DB`               | Database name. Defaults to `messmate`.                      |
-| `MESSMATE_ENABLE_DEMO`     | Demo sign-in. Off in production unless set to `true`.       |
-| `MESSMATE_TRUSTED_ORIGINS` | Extra origins allowed to POST, e.g. a preview domain.       |
-| `MESSMATE_DEV_ORIGINS`     | Extra origins allowed to load dev assets (development).     |
-| `TZ`                       | Timezone used to evaluate meal cutoffs.                     |
+| Variable                   | Purpose                                                     |
+| -------------------------- | ----------------------------------------------------------- |
+| `MONGODB_URI`              | Connection string. Required.                                 |
+| `MONGODB_DB`               | Database name. Defaults to `messmate`.                       |
+| `MESSMATE_ENABLE_DEMO`     | Demo sign-in. Off in production unless set to `true`.        |
+| `MESSMATE_APP_URL`         | Base URL used for links inside emails.                       |
+| `MESSMATE_MAIL_FROM`       | From address for outbound email.                             |
+| `RESEND_API_KEY`           | Use Resend's HTTP API for delivery.                          |
+| `SMTP_HOST` and friends    | Use any SMTP server instead. See `.env.example`.             |
+| `MESSMATE_CRON_SECRET`     | Bearer token protecting the reminder endpoint.               |
+| `MESSMATE_TRUSTED_ORIGINS` | Extra origins allowed to POST, e.g. a preview domain.        |
+| `MESSMATE_DEV_ORIGINS`     | Extra origins allowed to load dev assets (development).      |
 
 ## Routes
 
 Pages are real URLs, so the back button, refresh and shared links all work.
 `?month=YYYY-MM` on any workspace page selects the settlement month.
 
+Only `/` and `/community` are public; `robots.txt` disallows everything else and
+the rest of the app is served `noindex`.
+
 | Path                     | Who                                              |
 | ------------------------ | ------------------------------------------------ |
+| `/`                      | **Public.** Landing page. Signed-in visitors are redirected to their mess |
 | `/signin`, `/join`       | Signed out, or signed in without a mess          |
-| `/`                      | Overview: rate, your position, who pays whom     |
+| `/reset`                 | Password reset, reached from the emailed link    |
+| `/dashboard`             | Overview: rate, your position, who pays whom     |
 | `/meals`                 | Your own meal entries for the month              |
 | `/bazar`                 | Grocery ledger, receipts and the duty roster     |
 | `/expenses`              | Shared bills and the full settlement             |
-| `/rooms`, `/members`     | House setup and balances                         |
+| `/house`                 | Building & flat, rooms, facilities, listings     |
+| `/members`               | Members and balances                             |
 | `/settings`              | Managers only                                    |
 | `/admin`                 | Platform administrators only                     |
+| `/community`             | **Public.** Rooms to let, no sign-in needed      |
+| `/community/[slug]`      | **Public.** One room, with the real monthly cost |
 
 ### API
 
@@ -95,6 +107,121 @@ Pages are real URLs, so the back button, refresh and shared links all work.
 | `/api/proof`      | Streams a bazar receipt to members of that mess only            |
 | `/api/admin`      | Platform aggregates. Administrators only                        |
 | `/api/health`     | Liveness and database reachability, for uptime checks           |
+| `/api/cron/notifications` | Scheduled reminders. Bearer token, run hourly           |
+| `/api/geocode`    | Address search for the map picker, proxied to Nominatim          |
+
+## The landing page
+
+`/` is the public front door: what the product does, how the meal rate works,
+and a live sample of rooms currently to let. It is server rendered with no
+client JavaScript of its own, so it is fast and fully indexable. Anyone already
+signed in is redirected straight to `/dashboard`, or to `/join` if they have not
+set up a mess yet.
+
+## The house
+
+Everything above the room level lives under **House**, in four tabs:
+
+- **Building & flat** — address, floor, flat number, lift, parking (including how
+  a resident actually gets a space and what it costs), and a map pin.
+- **Rooms** — rent and capacity, plus what each room has: attached bathroom,
+  balcony, air conditioning, furnishing and free-text notes.
+- **Facilities** — shared equipment and services, from a starter list (fridge,
+  water filter, gas, Wi-Fi, geyser, generator, cleaner, and so on) that a manager
+  can tick, annotate and extend.
+- **Community** — managers only. Advertising a room to the public.
+
+The map picker uses Leaflet with OpenStreetMap tiles, so it needs no API key and
+no billing account. Address search is proxied through `/api/geocode` rather than
+called from the browser, which keeps Nominatim's usage policy satisfied and the
+content security policy free of third-party `connect-src` entries.
+
+## Recording for someone else
+
+A manager can record meals and bazar on behalf of any active member — for
+someone travelling, or who simply does not use the app.
+
+- **Meals** — a "Recording for" picker above the table. The page changes colour
+  and says whose sheet is being edited while it is not your own.
+- **Bazar** — a "Who bought this?" field, so the right person is credited.
+
+Both are enforced on the server: a member who calls the API directly with
+someone else's id is silently pinned to their own entries, and every edit made on
+someone's behalf is written to the activity log with both names.
+
+## Community listings
+
+A manager can advertise a room with a free space. **Publishing is an explicit,
+per-room opt-in**, and the dialog says plainly what becomes public before the
+switch is turned on.
+
+A published listing is a public, indexable web page showing:
+
+- the room and what it has, the building, the parking arrangement, the
+  facilities, the map pin, and the manager's chosen contact details;
+- **what living there actually costs** — rent, plus food at the house's real
+  meal rate, plus the real share of utilities, taken from the most recent
+  *completed* month in that house's own records. The month in progress is
+  skipped, because half a month of bazar makes a house look cheaper than it is.
+  A house with no completed month shows the rent alone rather than a guess.
+
+Member names, email addresses and individual balances are never included in the
+public payload. Taking a listing down purges the cached pages immediately,
+though search engines may keep a copy for a while, which is outside the app's
+control.
+
+`/community` is the only part of the app `robots.txt` allows; everything else
+stays `noindex`.
+
+## Time and timezones
+
+Each mess carries its own IANA timezone, set under **Settings → Meals**. It is
+the single source of truth for:
+
+- which calendar day counts as "today",
+- when the daily meal cutoff bites,
+- which month the app opens on,
+- when reminders are sent.
+
+A house in Dhaka closes entry at 22:30 Dhaka time whether the server runs in
+Frankfurt or Virginia, and the same rule is enforced on the server, not only
+hidden in the UI. The `TZ` variable now only affects log timestamps.
+
+## Email
+
+MessMate sends four things: mess invitations, password resets, meal-cutoff
+reminders and monthly settlement summaries.
+
+Pick a transport in `.env`:
+
+| Transport | When it is used                                  |
+| --------- | ------------------------------------------------ |
+| `console` | Default outside production. Prints to the log.   |
+| `resend`  | When `RESEND_API_KEY` is set. HTTP, no SMTP.     |
+| `smtp`    | When `SMTP_HOST` is set. Any SMTP server.        |
+| `disabled`| Default in production until one of these is set. |
+
+The app never claims to have sent something it could not: the invite dialog and
+the notification settings both change their wording when no transport is
+configured.
+
+### Scheduled reminders
+
+Point an hourly scheduler at the reminder endpoint:
+
+```bash
+curl -X POST https://your-host/api/cron/notifications      -H "Authorization: Bearer $MESSMATE_CRON_SECRET"
+```
+
+Each mess is evaluated in its own timezone, and each reminder is claimed once
+per member per day, so running the job more often than hourly — or retrying a
+failed run — sends nothing extra.
+
+- **Cutoff reminder** goes out in the hour before the cutoff, only to members
+  who have recorded nothing that day.
+- **Bazar duty reminder** goes to whoever is on duty, the day before.
+- **Settlement summary** goes to everyone on the first of the month, with the
+  closing figures for the month just ended.
 
 ## Security
 
@@ -106,7 +233,10 @@ Pages are real URLs, so the back button, refresh and shared links all work.
 - Every mutation re-checks the session, the membership and the role on the
   server. Hiding a button is never the only control.
 - `POST` requests are rejected if they carry a foreign `Origin`.
-- Sign-in, sign-up and demo access are rate limited per caller. The limiter is
+- Password resets use a single-use token; only its SHA-256 hash is stored, it
+  expires in 45 minutes, and using it signs out every other device. Asking for a
+  reset answers identically whether or not the account exists.
+- Sign-in, sign-up, resets and demo access are rate limited per caller. The limiter is
   in process memory: behind more than one instance, move it to a shared store
   (see [`src/lib/rate-limit.ts`](src/lib/rate-limit.ts)).
 - **Demo sign-in grants platform-administrator access**, so it is disabled in
@@ -124,9 +254,18 @@ Pages are real URLs, so the back button, refresh and shared links all work.
 
 ## Known limitations
 
-- No email is sent. Invitations reserve a place; the join code is shared by hand.
-- Notification preferences are stored but nothing is delivered yet.
-- Meal cutoffs use the server's timezone rather than a per-mess one.
 - Bazar receipts are stored inline with the entry and capped at 2 MB. Object
   storage would suit a large deployment better.
 - A member belongs to one mess at a time.
+- Email is sent inline after the response rather than through a queue, so a
+  provider outage drops that message instead of retrying it.
+- Listings carry no photographs yet, which is the first thing most people want
+  to see.
+- There is no moderation queue: a published listing goes live immediately, and
+  nothing is verified. The public pages say so.
+- Address search depends on the public Nominatim service, which is rate limited
+  and can be slow; the map always allows dropping a pin by hand instead.
+- Browser extensions that rewrite credential inputs (password managers, throwaway
+  email tools) used to trip React's hydration warning on the sign-in form. Those
+  inputs now carry `suppressHydrationWarning`, which is the documented remedy;
+  it does not mask mismatches anywhere else.

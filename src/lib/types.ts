@@ -24,7 +24,8 @@ export type Member = {
   role: "Manager" | "Member" | "Invited";
   roomId: string | null;
   room: string;
-  status: "active" | "invited";
+  /** "requested" is a pending join request, awaiting a manager. */
+  status: "active" | "invited" | "requested";
   joinedAt: string;
   color: string;
   /** Everything below is derived from the selected period, never stored. */
@@ -35,6 +36,8 @@ export type Member = {
   balance: number;
 };
 
+export type Furnishing = "unfurnished" | "partly" | "furnished";
+
 export type Room = {
   id: string;
   name: string;
@@ -42,6 +45,67 @@ export type Room = {
   rent: number;
   capacity: number;
   accent: "coral" | "blue" | "green" | "gold";
+  /** What the room itself has. These are what people ask about first. */
+  attachedBathroom: boolean;
+  balcony: boolean;
+  airConditioned: boolean;
+  furnishing: Furnishing;
+  /** Free text, e.g. "12 x 10 ft, south facing". */
+  notes: string;
+};
+
+export type ParkingType = "car" | "motorbike" | "both";
+
+/** The building and the flat inside it: everything above the room level. */
+export type MessProperty = {
+  addressLine: string;
+  area: string;
+  city: string;
+  postcode: string;
+  floor: string;
+  flatNumber: string;
+  hasLift: boolean;
+  parking: {
+    available: boolean;
+    type: ParkingType;
+    spots: number;
+    /** 0 means it is included in the rent. */
+    monthlyCost: number;
+    /** How a resident actually gets a space, in the manager's own words. */
+    procedure: string;
+  };
+  coordinates: { lat: number; lng: number } | null;
+  notes: string;
+};
+
+/** Shared equipment and services: fridge, filter, gas, guard, and so on. */
+export type Facility = {
+  id: string;
+  label: string;
+  available: boolean;
+  detail: string;
+};
+
+export type ListingStatus = "draft" | "published";
+export type PreferredOccupant = "anyone" | "students" | "professionals";
+
+export type Listing = {
+  id: string;
+  slug: string;
+  roomId: string;
+  roomName: string;
+  status: ListingStatus;
+  /** How many people the manager wants to let the room to. */
+  seats: number;
+  rentPerSeat: number;
+  description: string;
+  availableFrom: string;
+  preferredOccupant: PreferredOccupant;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  publishedAt: string | null;
+  updatedAt: string;
 };
 
 export type MealEntry = Record<MealKey, number> & {
@@ -135,6 +199,9 @@ export type WorkspaceData = {
   workspace: Workspace;
   /** False when no mail transport is configured, so the UI can say so. */
   emailEnabled: boolean;
+  property: MessProperty;
+  facilities: Facility[];
+  listings: Listing[];
   period: Period;
   periods: Period[];
   members: Member[];
@@ -148,6 +215,19 @@ export type WorkspaceData = {
   settlement: Settlement;
   trend: TrendPoint[];
   roster: { date: string; memberId: string; name: string; color: string }[];
+  /**
+   * Every member's entries for the period, so a manager can record on behalf of
+   * someone else. Only sent to managers; members receive their own in `meals`.
+   */
+  memberMeals: Record<string, MealEntry[]>;
+};
+
+/** What the signed-in user sees before they belong to a mess. */
+export type PendingRequest = {
+  messId: string;
+  messName: string;
+  location: string;
+  requestedAt: string;
 };
 
 export type AuthResponse = {

@@ -9,6 +9,6 @@ export const dynamic = "force-dynamic";
 export default async function AdminPage() {
   const auth = await readSession();
   if (!auth) redirect("/signin");
-  if (!auth.user.isAdmin) redirect("/");
+  if (!auth.user.isAdmin) redirect("/dashboard");
   return <AdminPortal userName={auth.user.name} />;
 }

@@ -157,7 +157,10 @@ export function AddExpenseModal({ onClose }: { onClose: () => void }) {
 }
 
 export function AddBazarModal({ onClose }: { onClose: () => void }) {
-  const { data, runAction, busy, notify } = useWorkspace();
+  const { data, runAction, busy, notify, isManager } = useWorkspace();
+  const activeMembers = data.members.filter((member) => member.status === "active");
+  // A manager often records the run someone else did and was paid back for.
+  const [buyerId, setBuyerId] = useState(data.workspace.userId);
   const [items, setItems] = useState([{ name: "", quantity: "" }]);
   const [date, setDate] = useState(todayInZone(data.settings.timezone));
   const [amount, setAmount] = useState("");
@@ -193,7 +196,7 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
     }
     const result = await runAction(
       "addBazar",
-      { date, amount: total, items, proof: proof ?? undefined },
+      { date, amount: total, items, proof: proof ?? undefined, memberId: buyerId },
       data.settings.bazarApproval ? "Bazar submitted for approval." : "Bazar added.",
     );
     if (result) onClose();
@@ -231,6 +234,19 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
             />
           </label>
         </div>
+
+        {isManager && activeMembers.length > 1 && (
+          <label>
+            Who bought this?
+            <select value={buyerId} onChange={(event) => setBuyerId(event.target.value)}>
+              {activeMembers.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.id === data.workspace.userId ? `${member.name} (you)` : member.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <fieldset className="item-fieldset">
           <legend>Items</legend>
@@ -315,6 +331,8 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
         <div className="invite-note">
           <Clock3 size={17} aria-hidden="true" />
           <p>
+            {buyerId !== data.workspace.userId &&
+              `Recorded as bought by ${activeMembers.find((m) => m.id === buyerId)?.name}, so they are credited for it. `}
             {data.settings.bazarApproval
               ? "A manager reviews this before it counts towards the meal rate."
               : "This counts towards the meal rate straight away."}

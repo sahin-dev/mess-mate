@@ -7,6 +7,9 @@ import type {
   ActivityItem,
   BazarEntry,
   Expense,
+  Facility,
+  Listing,
+  MessProperty,
   MealEntry,
   Member,
   MessSettings,
@@ -15,6 +18,7 @@ import type {
   UserRole,
   WorkspaceData,
 } from "@/lib/types";
+import { mergeFacilities, mergeProperty, mergeRoom } from "@/lib/property";
 import {
   hashPassword,
   newId,
@@ -35,7 +39,11 @@ export type MemberDocument = {
   joinedAt: string;
   color: string;
 };
-export type RoomDocument = Room & { messId: string };
+/** Rooms created before the house fields existed simply lack them. */
+type RoomExtras = "attachedBathroom" | "balcony" | "airConditioned" | "furnishing" | "notes";
+export type RoomDocument = Omit<Room, RoomExtras> &
+  Partial<Pick<Room, RoomExtras>> & { messId: string };
+export type ListingDocument = Omit<Listing, "roomName"> & { messId: string; createdAt: string };
 export type MealDocument = MealEntry & { messId: string; userId: string };
 /** `createdBy` is the member who actually paid, which is what the settlement needs. */
 export type ExpenseDocument = Omit<Expense, "paidBy" | "paidById"> & {
@@ -93,6 +101,11 @@ export async function ensureIndexes(db: Db) {
     db.collection("expenses").createIndex({ messId: 1, date: -1 }),
     db.collection("bazar").createIndex({ messId: 1, date: -1 }),
     db.collection("activity").createIndex({ messId: 1, createdAt: -1 }),
+    db.collection("rooms").createIndex({ messId: 1 }),
+    db.collection("listings").createIndex({ slug: 1 }, { unique: true }),
+    db.collection("listings").createIndex({ messId: 1 }),
+    // The community index page lists published rooms, newest first.
+    db.collection("listings").createIndex({ status: 1, publishedAt: -1 }),
   ]);
 }
 
@@ -112,7 +125,7 @@ export async function getWorkspaceData(
   const period = requestedPeriod ?? periodInZone(settings.timezone);
   const workspace = await workspaceFor(db, user, messId, role);
 
-  const [memberDocs, rooms, periodMeals, expenses, bazar, activity, trend, periods] =
+  const [memberDocs, rooms, periodMeals, expenses, bazar, activity, trend, periods, listings] =
     await Promise.all([
       db.collection<MemberDocument>("members").find({ messId }).sort({ joinedAt: 1 }).toArray(),
       db.collection<RoomDocument>("rooms").find({ messId }).sort({ name: 1 }).toArray(),
@@ -139,10 +152,14 @@ export async function getWorkspaceData(
         .toArray(),
       loadTrend(db, messId, period),
       loadPeriods(db, messId, period, settings.timezone),
+      db.collection<ListingDocument>("listings").find({ messId }).sort({ updatedAt: -1 }).toArray(),
     ]);
 
   const roomNames = new Map(rooms.map((room) => [room.id, room.name]));
   const memberNames = new Map(memberDocs.map((member) => [member.id, member.name]));
+  const isManager = role === "manager" || role === "admin";
+  const property = mergeProperty(mess?.property as Partial<MessProperty> | undefined, mess?.location ?? "");
+  const facilities = mergeFacilities(mess?.facilities as Facility[] | undefined);
 
   const settlement = computeSettlement({
     period,
@@ -180,24 +197,36 @@ export async function getWorkspaceData(
     period,
     periods,
     members,
-    rooms: rooms.map((room) => ({
-      id: room.id,
-      name: room.name,
-      type: room.type,
-      rent: room.rent,
-      capacity: room.capacity,
-      accent: room.accent,
+    property,
+    facilities,
+    listings: listings.map((listing) => ({
+      ...stripDocument(listing),
+      roomName: roomNames.get(listing.roomId) ?? "A removed room",
     })),
-    meals: periodMeals
-      .filter((meal) => meal.userId === user.id)
-      .map(({ id, date, breakfast, lunch, dinner, status }) => ({
-        id,
-        date,
-        breakfast,
-        lunch,
-        dinner,
-        status,
-      })),
+    rooms: rooms.map((room) =>
+      mergeRoom({
+        id: room.id,
+        name: room.name,
+        type: room.type,
+        rent: room.rent,
+        capacity: room.capacity,
+        accent: room.accent,
+        attachedBathroom: room.attachedBathroom,
+        balcony: room.balcony,
+        airConditioned: room.airConditioned,
+        furnishing: room.furnishing,
+        notes: room.notes,
+      }),
+    ),
+    meals: periodMeals.filter((meal) => meal.userId === user.id).map(toMealEntry),
+    memberMeals: isManager
+      ? Object.fromEntries(
+          memberDocs.map((member) => [
+            member.id,
+            periodMeals.filter((meal) => meal.userId === member.id).map(toMealEntry),
+          ]),
+        )
+      : { [user.id]: periodMeals.filter((meal) => meal.userId === user.id).map(toMealEntry) },
     expenses: expenses.map((expense) => ({
       id: expense.id,
       title: expense.title,
@@ -233,6 +262,22 @@ export async function getWorkspaceData(
     trend,
     roster: buildRoster(memberDocs, settings.rosterFrequency, settings.timezone),
   };
+}
+
+const toMealEntry = (meal: MealDocument): MealEntry => ({
+  id: meal.id,
+  date: meal.date,
+  breakfast: meal.breakfast,
+  lunch: meal.lunch,
+  dinner: meal.dinner,
+  status: meal.status,
+});
+
+/** Drops Mongo's `_id` and our `messId` before a document reaches the client. */
+function stripDocument<T extends { messId: string }>(document: T) {
+  const { messId: _messId, ...rest } = document as T & { _id?: unknown };
+  delete (rest as { _id?: unknown })._id;
+  return rest as Omit<T, "messId">;
 }
 
 /** The last twelve months of real meal-rate history, oldest first. */
@@ -321,6 +366,37 @@ const demoMessId = "mess_demo_shapla";
 const managerId = "user_demo_manager";
 const adminId = "user_demo_admin";
 
+const demoProperty: MessProperty = {
+  addressLine: "27/A Shukrabad",
+  area: "Dhanmondi",
+  city: "Dhaka",
+  postcode: "1207",
+  floor: "4th",
+  flatNumber: "4B",
+  hasLift: true,
+  parking: {
+    available: true,
+    type: "motorbike",
+    spots: 3,
+    monthlyCost: 500,
+    procedure: "Speak to the caretaker on the ground floor and pay the society office by the 5th.",
+  },
+  coordinates: { lat: 23.7509, lng: 90.3776 },
+  notes: "Corner building opposite the pharmacy. The main gate closes at midnight.",
+};
+
+const demoFacilities: Facility[] = [
+  { id: "fridge", label: "Fridge", available: true, detail: "Large, shared" },
+  { id: "water_filter", label: "Water filter", available: true, detail: "Pureit, serviced every 3 months" },
+  { id: "gas", label: "Cooking gas", available: true, detail: "Titas line" },
+  { id: "wifi", label: "Wi-Fi", available: true, detail: "40 Mbps" },
+  { id: "washing_machine", label: "Washing machine", available: true, detail: "" },
+  { id: "geyser", label: "Hot water / geyser", available: true, detail: "In both bathrooms" },
+  { id: "generator", label: "Generator or IPS", available: true, detail: "Runs fans and lights" },
+  { id: "cleaner", label: "Cleaner", available: true, detail: "Every morning except Friday" },
+  { id: "rooftop", label: "Rooftop access", available: true, detail: "" },
+];
+
 const demoMembers = [
   { id: managerId, name: "Rafi Islam", email: "manager@messmate.local", role: "Manager" as const, roomId: "room_a" },
   { id: "member_nayeem", name: "Nayeem Hasan", email: "nayeem@messmate.local", role: "Member" as const, roomId: "room_a" },
@@ -393,10 +469,22 @@ export async function ensureDemoData(db: Db) {
         managerId,
         createdAt,
         settings: defaultSettings,
+        property: demoProperty,
+        facilities: demoFacilities,
       },
     },
     { upsert: true },
   );
+
+  // Backfill the house details onto a demo mess created before they existed,
+  // without overwriting anything someone has since edited in the demo.
+  const demoMess = await db.collection<MessDocument>("messes").findOne({ id: demoMessId });
+  if (demoMess && !demoMess.property) {
+    await db.collection<MessDocument>("messes").updateOne(
+      { id: demoMessId },
+      { $set: { property: demoProperty, facilities: demoFacilities } },
+    );
+  }
 
   const members: MemberDocument[] = demoMembers.map((member, index) => ({
     id: member.id,
@@ -411,10 +499,10 @@ export async function ensureDemoData(db: Db) {
     color: MEMBER_COLORS[index % MEMBER_COLORS.length],
   }));
   const rooms: RoomDocument[] = [
-    { id: "room_a", messId: demoMessId, name: "Room A", type: "Master room", rent: 9000, capacity: 2, accent: "coral" },
-    { id: "room_b", messId: demoMessId, name: "Room B", type: "Single room", rent: 6500, capacity: 1, accent: "blue" },
-    { id: "room_c", messId: demoMessId, name: "Room C", type: "Shared room", rent: 8000, capacity: 2, accent: "green" },
-    { id: "room_d", messId: demoMessId, name: "Room D", type: "Small room", rent: 5500, capacity: 1, accent: "gold" },
+    { id: "room_a", messId: demoMessId, name: "Room A", type: "Master room", rent: 9000, capacity: 2, accent: "coral", attachedBathroom: true, balcony: true, airConditioned: true, furnishing: "furnished", notes: "14 x 12 ft, south facing" },
+    { id: "room_b", messId: demoMessId, name: "Room B", type: "Single room", rent: 6500, capacity: 1, accent: "blue", attachedBathroom: true, balcony: false, airConditioned: false, furnishing: "partly", notes: "Bed and desk provided" },
+    { id: "room_c", messId: demoMessId, name: "Room C", type: "Shared room", rent: 8000, capacity: 2, accent: "green", attachedBathroom: false, balcony: true, airConditioned: false, furnishing: "partly", notes: "" },
+    { id: "room_d", messId: demoMessId, name: "Room D", type: "Small room", rent: 5500, capacity: 1, accent: "gold", attachedBathroom: false, balcony: false, airConditioned: false, furnishing: "unfurnished", notes: "" },
   ];
 
   // Everything below is keyed to the current month, so opening the demo in a

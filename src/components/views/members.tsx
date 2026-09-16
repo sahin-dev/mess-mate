@@ -1,6 +1,16 @@
 "use client";
 
-import { KeyRound, Search, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import {
+  Check,
+  KeyRound,
+  LogOut,
+  Search,
+  ShieldCheck,
+  Trash2,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { formatDate, formatMoney, pluralize, signedMoney } from "@/lib/format";
 import { periodLabel } from "@/lib/period";
@@ -16,7 +26,8 @@ import {
 import { useWorkspace } from "@/components/workspace-context";
 
 export function MembersView() {
-  const { data, runAction, busy, isManager, confirm } = useWorkspace();
+  const router = useRouter();
+  const { data, runAction, busy, isManager, confirm, notify } = useWorkspace();
   const [inviting, setInviting] = useState(false);
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("All");
@@ -29,6 +40,45 @@ export function MembersView() {
   );
   const active = data.members.filter((member) => member.status === "active");
   const invited = data.members.filter((member) => member.status === "invited");
+  const requests = data.members.filter((member) => member.status === "requested");
+  const me = data.members.find((member) => member.id === data.workspace.userId);
+  const [approving, setApproving] = useState<Member | null>(null);
+
+  const reject = (member: Member) =>
+    confirm({
+      title: `Decline ${member.name}?`,
+      message:
+        "Their request to join is removed. They can ask again with the join code, so regenerate it in Mess settings if you want to stop that.",
+      confirmLabel: "Decline",
+      tone: "danger",
+      onConfirm: async () => {
+        await runAction("rejectMember", { id: member.id }, `${member.name} declined.`);
+      },
+    });
+
+  const leave = () =>
+    confirm({
+      title: `Leave ${data.workspace.messName}?`,
+      message:
+        "You lose access to this mess straight away. Your past meals and bazar entries stay in its records, but you will no longer appear in the split. You can ask to join again later.",
+      confirmLabel: "Leave this mess",
+      tone: "danger",
+      onConfirm: async () => {
+        const response = await fetch("/api/workspace", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "leaveMess" }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) {
+          notify(payload.error ?? "You could not be removed.", "error");
+          return;
+        }
+        // The session no longer has a workspace, so re-run the server layouts.
+        router.replace("/join");
+        router.refresh();
+      },
+    });
 
   const removeMember = (member: Member) =>
     confirm({
@@ -73,6 +123,47 @@ export function MembersView() {
           ) : undefined
         }
       />
+
+      {isManager && requests.length > 0 && (
+        <section className="panel request-panel">
+          <div className="table-toolbar">
+            <div>
+              <h3>{pluralize(requests.length, "person wants", "people want")} to join</h3>
+              <p>Accepting someone adds them to the split, and you can give them a room here.</p>
+            </div>
+          </div>
+          <ul className="request-list">
+            {requests.map((member) => (
+              <li key={member.id}>
+                <Avatar name={member.name} color={member.color} />
+                <div>
+                  <strong>{member.name}</strong>
+                  <small>{member.email}</small>
+                </div>
+                <span className="cell-muted">asked {formatDate(member.joinedAt)}</span>
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="button button-dark button-tiny"
+                    disabled={busy}
+                    onClick={() => setApproving(member)}
+                  >
+                    <Check size={14} aria-hidden="true" /> Accept
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-outline button-tiny"
+                    disabled={busy}
+                    onClick={() => reject(member)}
+                  >
+                    Decline
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {isManager && (
         <section className="join-code-banner">
@@ -225,7 +316,23 @@ export function MembersView() {
         )}
       </section>
 
+      {me && me.role !== "Manager" && (
+        <section className="leave-mess">
+          <div>
+            <strong>Leaving {data.workspace.messName}?</strong>
+            <p>
+              You can leave at any time. Settle anything you owe first &mdash; leaving does not
+              clear your balance.
+            </p>
+          </div>
+          <button type="button" className="button button-outline" onClick={leave}>
+            <LogOut size={15} aria-hidden="true" /> Leave this mess
+          </button>
+        </section>
+      )}
+
       {inviting && <InviteModal onClose={() => setInviting(false)} />}
+      {approving && <ApproveModal member={approving} onClose={() => setApproving(null)} />}
     </>
   );
 }
@@ -297,6 +404,72 @@ function InviteModal({ onClose }: { onClose: () => void }) {
           </button>
           <ActionButton busy={busy} busyLabel="Saving…" type="submit">
             Save invitation
+          </ActionButton>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Accepting a request and giving the person a room are the same decision in
+ * practice, so they happen in one dialog.
+ */
+function ApproveModal({ member, onClose }: { member: Member; onClose: () => void }) {
+  const { data, runAction, busy } = useWorkspace();
+  const [roomId, setRoomId] = useState("");
+
+  const occupancy = (id: string) => data.members.filter((entry) => entry.roomId === id).length;
+  const free = data.rooms.filter((room) => occupancy(room.id) < room.capacity);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const result = await runAction(
+      "approveMember",
+      { id: member.id, roomId: roomId || null },
+      `${member.name} is in.`,
+    );
+    if (result) onClose();
+  };
+
+  return (
+    <Modal
+      title={`Accept ${member.name}?`}
+      subtitle="They join the split from today and can record their own meals straight away."
+      onClose={onClose}
+    >
+      <form onSubmit={submit}>
+        <div className="invite-note">
+          <UserPlus size={17} aria-hidden="true" />
+          <p>
+            {member.email} will be able to see this mess: its meals, bazar, bills and
+            everyone&rsquo;s balances. They cannot change the rules or approve anything.
+          </p>
+        </div>
+
+        <label>
+          Give them a room (optional)
+          <select value={roomId} onChange={(event) => setRoomId(event.target.value)}>
+            <option value="">Assign later</option>
+            {free.map((room) => (
+              <option key={room.id} value={room.id}>
+                {room.name} &middot; {room.capacity - occupancy(room.id)} free
+              </option>
+            ))}
+          </select>
+          {data.rooms.length === 0 ? (
+            <small className="field-hint">Add rooms under House to assign one.</small>
+          ) : free.length === 0 ? (
+            <small className="field-hint">Every room is full, so they start unassigned.</small>
+          ) : null}
+        </label>
+
+        <div className="modal-actions">
+          <button type="button" className="button button-outline" onClick={onClose}>
+            Cancel
+          </button>
+          <ActionButton busy={busy} busyLabel="Accepting\u2026" type="submit">
+            Accept and add
           </ActionButton>
         </div>
       </form>

@@ -10,6 +10,6 @@ export default async function SettingsPage() {
   // Settings change the rules for everyone, so the check belongs on the server
   // as well as in the navigation.
   const auth = await readSession();
-  if (auth?.session.role !== "manager" && auth?.session.role !== "admin") redirect("/");
+  if (auth?.session.role !== "manager" && auth?.session.role !== "admin") redirect("/dashboard");
   return <SettingsView />;
 }

@@ -18,6 +18,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { downloadCsv, formatDate, formatMoney, relativeTime } from "@/lib/format";
@@ -109,7 +110,7 @@ export function AdminPortal({ userName }: { userName: string }) {
 
       <aside className={`admin-sidebar ${drawerOpen ? "open" : ""}`} aria-label="Admin navigation">
         <div className="sidebar-top">
-          <div className="admin-brand">
+          <Link className="admin-brand" href="/" aria-label="MessMate home">
             <span className="brand-mark" aria-hidden="true">
               <ShieldCheck size={21} />
             </span>
@@ -117,7 +118,7 @@ export function AdminPortal({ userName }: { userName: string }) {
               <strong>MessMate</strong>
               <small>Platform administration</small>
             </span>
-          </div>
+          </Link>
           <button
             className="drawer-close icon-button"
             onClick={() => setDrawerOpen(false)}

@@ -1,8 +1,6 @@
-import type { Metadata } from "next";
-import { RoomsView } from "@/components/views/rooms";
+import { permanentRedirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "Rooms" };
-
-export default function RoomsPage() {
-  return <RoomsView />;
+/** Rooms moved under the House section; keep old links and bookmarks working. */
+export default function LegacyRoomsPage() {
+  permanentRedirect("/house/rooms");
 }

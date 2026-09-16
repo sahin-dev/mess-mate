@@ -4,6 +4,7 @@ import {
   Bell,
   CalendarDays,
   Check,
+  Compass,
   CookingPot,
   Gauge,
   Home,
@@ -49,11 +50,11 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { href: "/", label: "Overview", icon: Gauge, mobile: true },
+  { href: "/dashboard", label: "Overview", icon: Gauge, mobile: true },
   { href: "/meals", label: "Meals", icon: Utensils, mobile: true },
   { href: "/bazar", label: "Bazar", icon: ShoppingBasket, mobile: true },
   { href: "/expenses", label: "Expenses", icon: ReceiptText, mobile: true },
-  { href: "/rooms", label: "Rooms", icon: Home },
+  { href: "/house", label: "House", icon: Home },
   { href: "/members", label: "Members", icon: Users },
 ];
 
@@ -61,7 +62,7 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
   "/meals": { title: "Meal planner", subtitle: "Plan ahead and keep the kitchen count accurate." },
   "/bazar": { title: "Bazar & groceries", subtitle: "Track purchases, receipts and the duty roster." },
   "/expenses": { title: "Expenses", subtitle: "See where every taka goes and how it is shared." },
-  "/rooms": { title: "Rooms", subtitle: "Manage rent, capacity and who lives where." },
+  "/house": { title: "The house", subtitle: "Address, rooms, facilities and what you advertise." },
   "/members": { title: "Members", subtitle: "Invite people and keep every balance transparent." },
   "/settings": { title: "Mess settings", subtitle: "Set the rules once and MessMate applies them for everyone." },
 };
@@ -109,6 +110,9 @@ function ShellChrome({ children }: { children: ReactNode }) {
   };
 
   const pendingBazar = data.bazar.filter((entry) => entry.status === "Pending").length;
+  const joinRequests = data.members.filter((member) => member.status === "requested").length;
+  const badgeFor = (href: string) =>
+    href === "/bazar" ? pendingBazar : href === "/members" && isManager ? joinRequests : 0;
   const visibleNav = navItems.filter((item) => !item.managerOnly || isManager);
 
   return (
@@ -126,7 +130,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
 
       <aside className={`sidebar ${drawerOpen ? "open" : ""}`} aria-label="Main navigation">
         <div className="sidebar-top">
-          <div className="brand">
+          <Link className="brand" href="/" aria-label="MessMate home">
             <span className="brand-mark" aria-hidden="true">
               <CookingPot size={22} />
             </span>
@@ -134,7 +138,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
               <strong>MessMate</strong>
               <small>Shared living, sorted.</small>
             </span>
-          </div>
+          </Link>
           <button
             className="drawer-close icon-button"
             onClick={() => setDrawerOpen(false)}
@@ -160,7 +164,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
           </span>
           <ul aria-labelledby="nav-workspace">
             {visibleNav.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href;
+              const active = pathname === href || pathname.startsWith(`${href}/`);
               return (
                 <li key={href}>
                   <Link
@@ -171,8 +175,8 @@ function ShellChrome({ children }: { children: ReactNode }) {
                   >
                     <Icon size={18} aria-hidden="true" />
                     <span>{label}</span>
-                    {href === "/bazar" && pendingBazar > 0 && (
-                      <i aria-label={`${pendingBazar} awaiting approval`}>{pendingBazar}</i>
+                    {badgeFor(href) > 0 && (
+                      <i aria-label={`${badgeFor(href)} awaiting attention`}>{badgeFor(href)}</i>
                     )}
                   </Link>
                 </li>
@@ -202,6 +206,13 @@ function ShellChrome({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-bottom">
+          <Link className="sidebar-external" href="/community">
+            <Compass size={17} aria-hidden="true" />
+            <span>
+              <strong>Find a room</strong>
+              <small>Browse rooms to let</small>
+            </span>
+          </Link>
           <div className="help-card">
             <span aria-hidden="true">
               <Sparkles size={16} />
@@ -236,7 +247,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
         {navItems
           .filter((item) => item.mobile)
           .map(({ href, label, icon: Icon }) => {
-            const active = pathname === href;
+            const active = pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link
                 key={href}
@@ -247,7 +258,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
               >
                 <Icon size={19} aria-hidden="true" />
                 <span>{label}</span>
-                {href === "/bazar" && pendingBazar > 0 && <i aria-hidden="true" />}
+                {badgeFor(href) > 0 && <i aria-hidden="true" />}
               </Link>
             );
           })}
@@ -263,7 +274,15 @@ function ShellChrome({ children }: { children: ReactNode }) {
 function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
   const { data, openPanel, setPeriod, switchingPeriod } = useWorkspace();
   const pathname = usePathname();
-  const meta = pageMeta[pathname];
+  // Sub-routes such as /house/rooms belong to their section's heading, so the
+  // longest matching prefix wins rather than an exact match.
+  const meta =
+    pageMeta[pathname] ??
+    pageMeta[
+      Object.keys(pageMeta)
+        .filter((key) => pathname.startsWith(`${key}/`))
+        .sort((a, b) => b.length - a.length)[0]
+    ];
   const title = meta?.title ?? `${greetingFor(data.workspace.userName)}`;
   const subtitle = meta?.subtitle ?? `Here is what is happening at ${data.workspace.messName}.`;
 

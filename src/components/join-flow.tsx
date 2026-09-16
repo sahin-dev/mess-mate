@@ -5,6 +5,7 @@ import {
   Building2,
   Check,
   ChevronRight,
+  Hourglass,
   KeyRound,
   LockKeyhole,
   MapPin,
@@ -12,16 +13,32 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import type { WorkspaceData } from "@/lib/types";
+import type { PendingRequest, WorkspaceData } from "@/lib/types";
+import type { PublicListingCard } from "@/lib/public-listings";
 import { AuthScreen, SecureNote } from "@/components/auth-screen";
+import { ListingCard } from "@/components/listing-card";
+import { ListingSearch } from "@/components/listing-search";
 import { ActionButton, CopyButton } from "@/components/ui";
 import { requestJson } from "@/components/workspace-context";
 
-type Stage = "choose" | "create" | "join" | "created";
+type Stage = "find" | "create" | "join" | "created" | "pending";
 
-export function JoinFlow({ userName }: { userName: string }) {
+export function JoinFlow({
+  userName,
+  pending,
+  listings,
+  areas,
+  searching,
+}: {
+  userName: string;
+  pending: PendingRequest | null;
+  listings: PublicListingCard[];
+  areas: { area: string; count: number }[];
+  searching: boolean;
+}) {
   const router = useRouter();
-  const [stage, setStage] = useState<Stage>("choose");
+  const [stage, setStage] = useState<Stage>(pending ? "pending" : "find");
+  const [request, setRequest] = useState<PendingRequest | null>(pending);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -45,7 +62,7 @@ export function JoinFlow({ userName }: { userName: string }) {
   };
 
   const enterWorkspace = () => {
-    router.replace("/");
+    router.replace("/dashboard");
     router.refresh();
   };
 
@@ -73,24 +90,89 @@ export function JoinFlow({ userName }: { userName: string }) {
       return;
     }
     const result = await run(() =>
-      requestJson<WorkspaceData>("/api/workspace", { action: "joinMess", joinCode: code }),
+      requestJson<{ status: "joined" | "pending"; messName: string }>("/api/workspace", {
+        action: "joinMess",
+        joinCode: code,
+      }),
     );
-    if (result) enterWorkspace();
+    if (!result) return;
+    // An invitation lets you straight in; anything else waits for a manager.
+    if (result.status === "joined") {
+      enterWorkspace();
+      return;
+    }
+    setRequest({
+      messId: "",
+      messName: result.messName,
+      location: "",
+      requestedAt: new Date().toISOString().slice(0, 10),
+    });
+    setStage("pending");
+  };
+
+  const cancelRequest = async () => {
+    const result = await run(() =>
+      requestJson<{ ok: boolean }>("/api/workspace", { action: "cancelJoinRequest" }),
+    );
+    if (result) {
+      setRequest(null);
+      setJoinInput("");
+      setStage("find");
+    }
   };
 
   const back = () => {
     setError("");
-    setStage("choose");
+    setStage("find");
   };
 
+  const refresh = () => router.refresh();
+
   return (
-    <AuthScreen onBack={stage === "create" || stage === "join" ? back : undefined}>
-      {stage === "choose" && (
-        <div className="auth-step choice-step">
-          <span className="auth-kicker">ONE MORE STEP</span>
-          <h1>Welcome, {userName.split(" ")[0]}.</h1>
-          <p>Your account is ready. Set up a mess, or join the one you already live in.</p>
-          <div className="setup-choices">
+    <AuthScreen
+      wide={stage === "find"}
+      onBack={stage === "create" || stage === "join" ? back : undefined}
+    >
+      {stage === "find" && (
+        <div className="find-step">
+          <header className="find-head">
+            <span className="auth-kicker">WELCOME, {userName.split(" ")[0].toUpperCase()}</span>
+            <h1>Find a room, or set up your own mess.</h1>
+            <p>
+              Browse rooms to let with the real monthly cost of living there, or use a join code if
+              your housemates already run a mess here.
+            </p>
+          </header>
+
+          <ListingSearch areas={areas} resultCount={listings.length} basePath="/join" />
+
+          {listings.length === 0 ? (
+            <p className="find-empty">
+              {searching
+                ? "No rooms match that search yet. Try a wider area, or clear the filters."
+                : "No rooms are listed right now. You can still join a mess with a code, or create your own."}
+            </p>
+          ) : (
+            <ul className="listing-grid">
+              {listings.map((listing) => (
+                <li key={listing.slug}>
+                  <ListingCard listing={listing} />
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="find-actions">
+            <button type="button" onClick={() => setStage("join")}>
+              <span className="choice-icon green" aria-hidden="true">
+                <KeyRound size={24} />
+              </span>
+              <span>
+                <strong>I have a join code</strong>
+                <small>Ask to join the mess your housemates already run.</small>
+              </span>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
             <button type="button" onClick={() => setStage("create")}>
               <span className="choice-icon coral" aria-hidden="true">
                 <Building2 size={24} />
@@ -101,21 +183,7 @@ export function JoinFlow({ userName }: { userName: string }) {
               </span>
               <ChevronRight size={18} aria-hidden="true" />
             </button>
-            <button type="button" onClick={() => setStage("join")}>
-              <span className="choice-icon green" aria-hidden="true">
-                <KeyRound size={24} />
-              </span>
-              <span>
-                <strong>Join an existing mess</strong>
-                <small>Use the code your mess manager shared with you.</small>
-              </span>
-              <ChevronRight size={18} aria-hidden="true" />
-            </button>
           </div>
-          <SecureNote>
-            Whoever creates the mess becomes its manager and can hand that role to someone else
-            later.
-          </SecureNote>
         </div>
       )}
 
@@ -192,7 +260,9 @@ export function JoinFlow({ userName }: { userName: string }) {
           <h1>Enter your join code.</h1>
           <p>
             Your mess manager can find it under Members. It looks like{" "}
-            <strong>SHAPLA-7K4M</strong>.
+            <strong>SHAPLA-7K4M</strong>. Entering it sends a request that a manager has to
+            accept &mdash; unless they have already invited your email, in which case you go
+            straight in.
           </p>
           <form className="auth-form" onSubmit={joinMess}>
             <label>
@@ -217,8 +287,8 @@ export function JoinFlow({ userName }: { userName: string }) {
                 {error}
               </p>
             )}
-            <ActionButton busy={busy} busyLabel="Looking up…" className="auth-primary" type="submit">
-              Find and join <ChevronRight size={17} aria-hidden="true" />
+            <ActionButton busy={busy} busyLabel="Sending…" className="auth-primary" type="submit">
+              Send a join request <ChevronRight size={17} aria-hidden="true" />
             </ActionButton>
           </form>
           <p className="join-safety">
@@ -228,6 +298,53 @@ export function JoinFlow({ userName }: { userName: string }) {
               everyone in that mess.
             </span>
           </p>
+        </div>
+      )}
+
+      {stage === "pending" && request && (
+        <div className="auth-step pending-step">
+          <span className="pending-ring" aria-hidden="true">
+            <Hourglass size={28} />
+          </span>
+          <span className="auth-kicker">WAITING FOR APPROVAL</span>
+          <h1>Your request is with {request.messName}.</h1>
+          <p>
+            A manager there has to accept you before you can see the mess. You will get in as soon
+            as they do &mdash; there is nothing else for you to do.
+          </p>
+
+          <ol className="pending-timeline">
+            <li className="done">
+              <Check size={13} aria-hidden="true" /> You asked to join
+            </li>
+            <li className="current">
+              <Hourglass size={13} aria-hidden="true" /> A manager reviews it
+            </li>
+            <li>
+              <Users size={13} aria-hidden="true" /> They assign you a room
+            </li>
+          </ol>
+
+          {error && (
+            <p className="field-error" role="alert">
+              {error}
+            </p>
+          )}
+
+          <button className="auth-primary" type="button" onClick={refresh}>
+            Check again <ChevronRight size={17} aria-hidden="true" />
+          </button>
+
+          <div className="pending-actions">
+            <button type="button" className="auth-secondary" disabled={busy} onClick={cancelRequest}>
+              Cancel the request
+            </button>
+          </div>
+
+          <SecureNote>
+            In a hurry? Ask your manager to invite your email address instead &mdash; an invitation
+            lets you in without waiting.
+          </SecureNote>
         </div>
       )}
 

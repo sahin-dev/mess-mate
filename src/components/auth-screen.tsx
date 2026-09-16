@@ -13,25 +13,30 @@ export function AuthScreen({
   children,
   onBack,
   backLabel = "Back",
+  wide = false,
 }: {
   children: ReactNode;
   onBack?: () => void;
   backLabel?: string;
+  /** Drops the marketing panel, for screens that need the whole width. */
+  wide?: boolean;
 }) {
   return (
-    <main className="auth-shell">
+    <main className={`auth-shell ${wide ? "auth-shell-wide" : ""}`}>
       <section className="auth-main">
-        <header className="auth-brand">
-          <span className="brand-mark" aria-hidden="true">
-            <CookingPot size={22} />
-          </span>
-          <span>
-            <strong>MessMate</strong>
-            <small>Shared living, sorted.</small>
-          </span>
+        <header>
+          <Link className="auth-brand" href="/" aria-label="MessMate home">
+            <span className="brand-mark" aria-hidden="true">
+              <CookingPot size={22} />
+            </span>
+            <span>
+              <strong>MessMate</strong>
+              <small>Shared living, sorted.</small>
+            </span>
+          </Link>
         </header>
 
-        <div className="auth-content">
+        <div className={`auth-content ${wide ? "auth-content-wide" : ""}`}>
           {onBack && (
             <button className="auth-back" onClick={onBack} type="button">
               <ArrowLeft size={16} aria-hidden="true" /> {backLabel}
@@ -46,7 +51,8 @@ export function AuthScreen({
         </footer>
       </section>
 
-      <aside className="auth-aside" aria-hidden="true">
+      {!wide && (
+        <aside className="auth-aside" aria-hidden="true">
         <div className="auth-aside-top">
           <span>BUILT FOR SHARED HOMES</span>
           <h2>
@@ -107,9 +113,10 @@ export function AuthScreen({
           </footer>
         </blockquote>
 
-        <div className="auth-aside-orbit orbit-one" />
-        <div className="auth-aside-orbit orbit-two" />
-      </aside>
+          <div className="auth-aside-orbit orbit-one" />
+          <div className="auth-aside-orbit orbit-two" />
+        </aside>
+      )}
     </main>
   );
 }

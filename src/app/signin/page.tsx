@@ -11,7 +11,7 @@ export default async function SignInPage() {
   const auth = await readSession();
   if (auth) {
     if (auth.user.isAdmin) redirect("/admin");
-    redirect(auth.session.activeMessId ? "/" : "/join");
+    redirect(auth.session.activeMessId ? "/dashboard" : "/join");
   }
   return <SignInForm demoEnabled={demoEnabled()} />;
 }

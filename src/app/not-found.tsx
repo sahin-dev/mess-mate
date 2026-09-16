@@ -9,7 +9,7 @@ export default function NotFound() {
       <span className="status-code">404</span>
       <h1>We could not find that page</h1>
       <p>The link may be out of date, or the page may have moved.</p>
-      <Link className="button button-dark" href="/">
+      <Link className="button button-dark" href="/dashboard">
         Back to your mess
       </Link>
     </main>
