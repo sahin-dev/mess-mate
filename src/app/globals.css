@@ -4553,6 +4553,7 @@ select:disabled {
     align-items: center;
   }
 
+  .button-tiny { min-height: 38px; }
   .area-chips a { min-height: 40px; }
   .settlement-action,
   .subtle-button { min-height: 44px; }
