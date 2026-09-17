@@ -564,7 +564,7 @@ function NextDuty() {
       <div className="duty-details">
         <strong>{formatDate(slot.date, { weekday: "long", day: "numeric", month: "long" })}</strong>
         <p>{isMine ? "You are on bazar duty" : `${slot.name} is on bazar duty`}</p>
-        <Avatar name={slot.name} color={slot.color} size="sm" />
+        <Avatar name={slot.name} color={slot.color} size="sm" avatarId={slot.avatarId} />
       </div>
       <Link className="subtle-button" href="/bazar">
         See the full roster <ChevronRight size={15} aria-hidden="true" />

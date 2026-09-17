@@ -13,6 +13,7 @@ import type {
   MealEntry,
   Member,
   MessSettings,
+  ProfileVisibility,
   Room,
   TrendPoint,
   UserRole,
@@ -20,6 +21,8 @@ import type {
 } from "@/lib/types";
 import { mergeFacilities, mergeProperty, mergeRoom } from "@/lib/property";
 import { mergeListing } from "@/lib/listing-post";
+import { DEMO_ADMIN_ID, DEMO_MANAGER_ID, DEMO_MESS_ID } from "@/lib/demo";
+import { canSee, mergeVisibility } from "@/lib/visibility";
 import {
   hashPassword,
   newId,
@@ -59,6 +62,20 @@ export type ListingPhotoDocument = {
   bytes: number;
   width: number;
   height: number;
+  createdAt: string;
+};
+/**
+ * A profile picture. Stored like a listing photo — base64 in Mongo — because
+ * the app has no object store, and an avatar is a few tens of kilobytes after
+ * the browser has squared it off.
+ */
+export type AvatarDocument = {
+  id: string;
+  userId: string;
+  type: string;
+  /** Base64, without the data: prefix. */
+  data: string;
+  bytes: number;
   createdAt: string;
 };
 export type MealDocument = MealEntry & { messId: string; userId: string };
@@ -107,6 +124,8 @@ export async function ensureIndexes(db: Db) {
   await Promise.all([
     db.collection("users").createIndex({ email: 1 }, { unique: true }),
     db.collection("users").createIndex({ id: 1 }, { unique: true }),
+    // The admin dashboard counts accounts seen inside a window.
+    db.collection("users").createIndex({ lastSeenAt: -1 }),
     db.collection("sessions").createIndex({ token: 1 }, { unique: true }),
     db.collection("sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     db.collection("messes").createIndex({ joinCode: 1 }, { unique: true }),
@@ -127,6 +146,9 @@ export async function ensureIndexes(db: Db) {
     // bulk when a post is deleted.
     db.collection("listingPhotos").createIndex({ id: 1 }, { unique: true }),
     db.collection("listingPhotos").createIndex({ listingId: 1 }),
+    // Avatars are fetched by id when serving, and by user when replacing one.
+    db.collection("avatars").createIndex({ id: 1 }, { unique: true }),
+    db.collection("avatars").createIndex({ userId: 1 }),
   ]);
 }
 
@@ -176,6 +198,24 @@ export async function getWorkspaceData(
       db.collection<ListingDocument>("listings").find({ messId }).sort({ updatedAt: -1 }).toArray(),
     ]);
 
+  // A member row belongs to the mess; the phone number and picture belong to
+  // the person's own account, so they are read back through `userId`. An
+  // invited member has no account yet and simply has neither.
+  const linkedUserIds = memberDocs.map((member) => member.userId).filter((id): id is string => Boolean(id));
+  const profiles = linkedUserIds.length
+    ? await db
+        .collection<UserDocument>("users")
+        .find({ id: { $in: linkedUserIds } })
+        .project<{
+          id: string;
+          phone?: string;
+          avatarId?: string | null;
+          visibility?: Partial<ProfileVisibility>;
+        }>({ id: 1, phone: 1, avatarId: 1, visibility: 1 })
+        .toArray()
+    : [];
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+
   const roomNames = new Map(rooms.map((room) => [room.id, room.name]));
   const memberNames = new Map(memberDocs.map((member) => [member.id, member.name]));
   const isManager = role === "manager" || role === "admin";
@@ -194,10 +234,24 @@ export async function getWorkspaceData(
 
   const members: Member[] = memberDocs.map((member) => {
     const position = positions.get(member.id);
+    const profile = member.userId ? profileById.get(member.userId) : undefined;
+    // Everyone in this list shares the viewer's mess, so "mess" always passes;
+    // what is actually being decided here is "private". A member who has not
+    // signed up yet has no account to carry a choice, and their address is the
+    // one the manager typed into the invitation, so it stays visible.
+    const seen = { isSelf: member.userId === user.id, inMess: true, isManager };
+    const level = mergeVisibility(profile?.visibility);
+    const showContact = (field: "email" | "phone") =>
+      !profile || canSee(level[field], seen);
     return {
       id: member.id,
       name: member.name,
-      email: member.email,
+      email: showContact("email") ? member.email : "",
+      phone: showContact("phone") ? (profile?.phone ?? "") : "",
+      // A picture is not a contact detail, so a manager gets no exemption.
+      avatarId: canSee(level.avatar, { ...seen, isManager: false })
+        ? (profile?.avatarId ?? null)
+        : null,
       role: member.role,
       roomId: member.roomId,
       status: member.status,
@@ -283,7 +337,14 @@ export async function getWorkspaceData(
     })),
     settlement,
     trend,
-    roster: buildRoster(memberDocs, settings.rosterFrequency, settings.timezone),
+    roster: buildRoster(
+      memberDocs.map((member) => ({
+        ...member,
+        avatarId: member.userId ? (profileById.get(member.userId)?.avatarId ?? null) : null,
+      })),
+      settings.rosterFrequency,
+      settings.timezone,
+    ),
   };
 }
 
@@ -385,9 +446,9 @@ export async function addActivity(
  * Demo workspace
  * ------------------------------------------------------------------ */
 
-const demoMessId = "mess_demo_shapla";
-const managerId = "user_demo_manager";
-const adminId = "user_demo_admin";
+const demoMessId = DEMO_MESS_ID;
+const managerId = DEMO_MANAGER_ID;
+const adminId = DEMO_ADMIN_ID;
 
 const demoProperty: MessProperty = {
   addressLine: "27/A Shukrabad",

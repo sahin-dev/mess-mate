@@ -16,7 +16,8 @@ import {
   mergeRules,
   statedPreferences,
 } from "@/lib/listing-post";
-import type { MessDocument } from "@/lib/server-utils";
+import type { MessDocument, UserDocument } from "@/lib/server-utils";
+import { mergeVisibility } from "@/lib/visibility";
 import { computeSettlement } from "@/lib/settlement";
 import { periodInZone, normalizeTimezone } from "@/lib/timezone";
 import type {
@@ -64,6 +65,8 @@ export type PublicListing = {
   /** The poster's display name and whether they run the house or live in it. */
   authorName: string;
   authorRole: "manager" | "member";
+  /** Their picture, but only if they chose to let anyone see it. */
+  authorAvatarId: string | null;
   property: MessProperty;
   room: Room;
   facilities: Facility[];
@@ -252,6 +255,21 @@ export async function loadListingAreas(db: Db) {
     .slice(0, 8);
 }
 
+/**
+ * The poster's picture, if and only if they set it to be seen by anyone.
+ *
+ * Everything else about a published post is public by definition, but a face is
+ * the poster's own to give, so this is the one field that asks first.
+ */
+async function publicAvatarId(db: Db, authorId: string | undefined) {
+  if (!authorId) return null;
+  const author = await db
+    .collection<UserDocument>("users")
+    .findOne({ id: authorId }, { projection: { avatarId: 1, visibility: 1 } });
+  if (!author?.avatarId) return null;
+  return mergeVisibility(author.visibility).avatar === "public" ? author.avatarId : null;
+}
+
 export async function loadPublishedListing(db: Db, slug: string): Promise<PublicListing | null> {
   const listing = await db
     .collection<ListingDocument>("listings")
@@ -274,6 +292,7 @@ export async function loadPublishedListing(db: Db, slug: string): Promise<Public
     rules: mergeRules(listing.rules),
     authorName: listing.authorName ?? "",
     authorRole: listing.authorRole ?? "manager",
+    authorAvatarId: await publicAvatarId(db, listing.authorId),
     property: mergeProperty(mess.property as Partial<MessProperty>, mess.location),
     room: mergeRoom(stored),
     facilities: mergeFacilities(mess.facilities as Facility[]).filter((facility) => facility.available),

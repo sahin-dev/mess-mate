@@ -135,7 +135,7 @@ export function MembersView() {
           <ul className="request-list">
             {requests.map((member) => (
               <li key={member.id}>
-                <Avatar name={member.name} color={member.color} />
+                <Avatar name={member.name} color={member.color} avatarId={member.avatarId} />
                 <div>
                   <strong>{member.name}</strong>
                   <small>{member.email}</small>
@@ -236,13 +236,18 @@ export function MembersView() {
               return (
                 <div className="member-row" key={member.id}>
                   <div>
-                    <Avatar name={member.name} color={member.color} />
+                    <Avatar name={member.name} color={member.color} avatarId={member.avatarId} />
                     <span>
                       <strong>
                         {member.name}
                         {mine && <em> (you)</em>}
                       </strong>
-                      <small>{member.email}</small>
+                      {member.email ? (
+                        <small>{member.email}</small>
+                      ) : (
+                        <small className="cell-muted">Contact details hidden</small>
+                      )}
+                      {member.phone && <small className="member-phone">{member.phone}</small>}
                     </span>
                   </div>
                   <span className={`role-badge ${member.role.toLowerCase()}`}>{member.role}</span>

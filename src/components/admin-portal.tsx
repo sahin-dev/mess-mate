@@ -10,11 +10,13 @@ import {
   HeartPulse,
   LogOut,
   Menu,
+  Radio,
   RefreshCw,
   Search,
   ServerCog,
   ShieldAlert,
   ShieldCheck,
+  UserCheck,
   Users,
   X,
 } from "lucide-react";
@@ -209,6 +211,11 @@ export function AdminPortal({ userName }: { userName: string }) {
                     downloadCsv("messmate-platform-summary.csv", [
                       ["Metric", "Value"],
                       ["Registered users", data.stats.users],
+                      ["Signed in now", data.stats.signedInNow],
+                      ["Active today", data.stats.activeDay],
+                      ["Active this week", data.stats.activeWeek],
+                      ["Active this month", data.stats.activeMonth],
+                      ["Activity figures complete", data.stats.activityPartial ? "No" : "Yes"],
                       ["Messes", data.stats.messes],
                       ["Active messes", data.stats.activeMesses],
                       ["Meal entries", data.stats.meals],
@@ -268,9 +275,36 @@ function AdminOverview({
     <>
       <section className="admin-metrics">
         <AdminMetric label="Registered users" value={data.stats.users.toLocaleString()} detail="Accounts in the database" icon={Users} tone="violet" />
-        <AdminMetric label="Messes" value={data.stats.messes.toLocaleString()} detail={`${data.stats.activeMesses} with active members`} icon={Building2} tone="green" />
-        <AdminMetric label="Meal entries" value={data.stats.meals.toLocaleString()} detail="All time" icon={Activity} tone="coral" />
+        <AdminMetric
+          label="Active this week"
+          value={data.stats.activeWeek.toLocaleString()}
+          detail={`${data.stats.activeDay.toLocaleString()} today · ${data.stats.activeMonth.toLocaleString()} this month`}
+          icon={UserCheck}
+          tone="green"
+        />
+        <AdminMetric
+          label="Signed in now"
+          value={data.stats.signedInNow.toLocaleString()}
+          detail="Accounts holding a live session"
+          icon={Radio}
+          tone="coral"
+        />
         <AdminMetric label="Expense volume" value={formatMoney(data.stats.expenseVolume)} detail="Recorded across all messes" icon={BarChart3} tone="blue" />
+      </section>
+
+      {data.stats.activityPartial && (
+        <p className="admin-stat-note">
+          Activity is counted from each account&apos;s last visit, which is only recorded from the
+          moment this dashboard started tracking it. Accounts that have not signed in since are
+          not counted yet, so these figures will rise over the first few weeks.
+        </p>
+      )}
+
+      <section className="admin-metrics">
+        <AdminMetric label="Messes" value={data.stats.messes.toLocaleString()} detail={`${data.stats.activeMesses} with active members`} icon={Building2} tone="blue" />
+        <AdminMetric label="Meal entries" value={data.stats.meals.toLocaleString()} detail="All time" icon={Activity} tone="violet" />
+        <AdminMetric label="Bazar entries" value={data.stats.bazar.toLocaleString()} detail="All time" icon={Activity} tone="green" />
+        <AdminMetric label="Rooms" value={data.stats.rooms.toLocaleString()} detail="Configured across all messes" icon={Building2} tone="coral" />
       </section>
 
       <div className="admin-dashboard-grid">

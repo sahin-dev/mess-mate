@@ -224,11 +224,18 @@ function ShellChrome({ children }: { children: ReactNode }) {
             </button>
           </div>
           <div className="profile-row">
-            <Avatar name={workspace.userName} color="#c9603f" size="sm" />
-            <span>
-              <strong>{workspace.userName}</strong>
-              <small>{isManager ? "Mess manager" : "Mess member"}</small>
-            </span>
+            <Link className="profile-identity" href="/profile" onClick={closeDrawer}>
+              <Avatar
+                name={workspace.userName}
+                color="#c9603f"
+                size="sm"
+                avatarId={workspace.userAvatarId}
+              />
+              <span>
+                <strong>{workspace.userName}</strong>
+                <small>{isManager ? "Mess manager" : "Mess member"}</small>
+              </span>
+            </Link>
             <button type="button" onClick={signOut} aria-label="Sign out" title="Sign out">
               <LogOut size={17} aria-hidden="true" />
             </button>
@@ -321,7 +328,13 @@ function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
           <Bell size={19} aria-hidden="true" />
           {data.activity.length > 0 && <i aria-hidden="true" />}
         </button>
-        <Avatar name={data.workspace.userName} color="#c9603f" />
+        <Link href="/profile" className="topbar-identity" aria-label="Your profile">
+          <Avatar
+            name={data.workspace.userName}
+            color="#c9603f"
+            avatarId={data.workspace.userAvatarId}
+          />
+        </Link>
       </div>
     </header>
   );

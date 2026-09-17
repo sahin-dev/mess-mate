@@ -5,6 +5,15 @@ export type MealKey = "breakfast" | "lunch" | "dinner";
 export type ExpenseCategory = "Fixed" | "Utility" | "Maintenance" | "Other";
 export type SplitMethod = "All members equally" | "By room";
 
+/** Who can see one piece of a profile. */
+export type Visibility = "private" | "mess" | "public";
+
+export type ProfileVisibility = {
+  avatar: Visibility;
+  email: Visibility;
+  phone: Visibility;
+};
+
 export type Workspace = {
   role: UserRole;
   messId: string;
@@ -14,6 +23,13 @@ export type Workspace = {
   userId: string;
   userName: string;
   userEmail: string;
+  userPhone: string;
+  /** True for the shared demo accounts, whose profile cannot be edited. */
+  isDemo: boolean;
+  /** The signed-in member's own choices about who sees what. */
+  userVisibility: ProfileVisibility;
+  /** Null when the account has no picture and initials are shown instead. */
+  userAvatarId: string | null;
   memberCount: number;
 };
 
@@ -21,6 +37,9 @@ export type Member = {
   id: string;
   name: string;
   email: string;
+  /** From the person's own account, so it is blank until they fill it in. */
+  phone: string;
+  avatarId: string | null;
   role: "Manager" | "Member" | "Invited";
   roomId: string | null;
   room: string;
@@ -266,7 +285,13 @@ export type WorkspaceData = {
   activity: ActivityItem[];
   settlement: Settlement;
   trend: TrendPoint[];
-  roster: { date: string; memberId: string; name: string; color: string }[];
+  roster: {
+    date: string;
+    memberId: string;
+    name: string;
+    color: string;
+    avatarId: string | null;
+  }[];
   /**
    * Every member's entries for the period, so a manager can record on behalf of
    * someone else. Only sent to managers; members receive their own in `meals`.
@@ -296,6 +321,18 @@ export type AdminData = {
     bazar: number;
     rooms: number;
     activeMesses: number;
+    /** Accounts holding a session that has not expired: signed in right now. */
+    signedInNow: number;
+    /** Accounts that made a request inside the window, by `lastSeenAt`. */
+    activeDay: number;
+    activeWeek: number;
+    activeMonth: number;
+    /**
+     * True until every account has been seen at least once. Activity is only
+     * recorded from the moment the feature shipped, so the first weeks under-
+     * report and the dashboard has to say so rather than imply a decline.
+     */
+    activityPartial: boolean;
   };
   messes: {
     id: string;

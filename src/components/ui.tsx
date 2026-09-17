@@ -9,23 +9,33 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { avatarUrl } from "@/lib/avatar";
 import { copyText, initialsOf } from "@/lib/format";
 
 export function Avatar({
   name,
   color,
   size = "md",
+  avatarId,
 }: {
   name: string;
   color: string;
   size?: "sm" | "md";
+  /** A profile picture to show instead of initials, when the person has one. */
+  avatarId?: string | null;
 }) {
+  const className = `avatar ${size === "sm" ? "avatar-small" : ""}`;
+  if (avatarId) {
+    // Decorative in every place an avatar appears: the name is always written
+    // next to it, so alt text would only repeat it to a screen reader.
+    return (
+      /* eslint-disable-next-line @next/next/no-img-element -- served from our
+         own route at a fixed 256px, already squared and downscaled. */
+      <img className={`${className} avatar-photo`} src={avatarUrl(avatarId)} alt="" loading="lazy" />
+    );
+  }
   return (
-    <span
-      className={`avatar ${size === "sm" ? "avatar-small" : ""}`}
-      style={{ backgroundColor: color }}
-      aria-hidden="true"
-    >
+    <span className={className} style={{ backgroundColor: color }} aria-hidden="true">
       {initialsOf(name)}
     </span>
   );

@@ -178,7 +178,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
                 const mine = entry.memberId === data.workspace.userId;
                 return (
                   <li className="ledger-row" key={entry.id}>
-                    <Avatar name={entry.by} color={member?.color ?? "#3f6b80"} size="sm" />
+                    <Avatar name={entry.by} color={member?.color ?? "#3f6b80"} size="sm" avatarId={member?.avatarId} />
                     <div className="ledger-person">
                       <strong>{mine ? "You" : entry.by}</strong>
                       <small>{formatDate(entry.date)}</small>
@@ -270,7 +270,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
                       <span>{day.toLocaleDateString("en-GB", { weekday: "short" }).toUpperCase()}</span>
                       <strong>{day.getDate()}</strong>
                     </div>
-                    <Avatar name={slot.name} color={slot.color} size="sm" />
+                    <Avatar name={slot.name} color={slot.color} size="sm" avatarId={slot.avatarId} />
                     <span>
                       <strong>{mine ? "You" : slot.name.split(" ")[0]}</strong>
                       <small>{formatDate(slot.date, { day: "numeric", month: "short" })}</small>

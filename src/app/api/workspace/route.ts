@@ -7,6 +7,7 @@ import {
   type BazarDocument,
   type ExpenseDocument,
   type ListingDocument,
+  type AvatarDocument,
   type ListingPhotoDocument,
   type MealDocument,
   type MemberDocument,
@@ -14,7 +15,11 @@ import {
 } from "@/lib/data";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { invitationEmail } from "@/lib/email-templates";
+import { emailChangedEmail, invitationEmail } from "@/lib/email-templates";
+import { MAX_AVATAR_BYTES } from "@/lib/avatar";
+import { isDemoUser } from "@/lib/demo";
+import { mergeVisibility } from "@/lib/visibility";
+import { rateLimit } from "@/lib/rate-limit";
 import { sendMail } from "@/lib/mail";
 import { isPeriod, type Period } from "@/lib/period";
 import {
@@ -32,6 +37,7 @@ import {
   cleanNumber,
   cleanString,
   createJoinCode,
+  hashPassword,
   jsonError,
   newId,
   readJsonBody,
@@ -39,7 +45,9 @@ import {
   requireSession,
   requireWorkspace,
   setActiveWorkspace,
+  verifyPassword,
   type MessDocument,
+  type UserDocument,
 } from "@/lib/server-utils";
 import { emptyProperty, slugify } from "@/lib/property";
 import {
@@ -112,6 +120,15 @@ function timezoneOrThrow(value: unknown) {
   }
   return value;
 }
+
+/** Actions that change the account itself, rather than anything in the mess. */
+const PROFILE_ACTIONS = new Set([
+  "updateProfile",
+  "updateVisibility",
+  "changePassword",
+  "setAvatar",
+  "removeAvatar",
+]);
 
 const optionalText = (value: unknown, max: number) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -372,7 +389,15 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    const { db, user, mess, role } = await requireWorkspace();
+    const { db, user, mess, role, session } = await requireWorkspace();
+    // The demo signs every visitor in as one shared account, so a visitor who
+    // changed its password or address would lock out every visitor after them.
+    if (PROFILE_ACTIONS.has(action) && isDemoUser(user.id)) {
+      throw new ApiError(
+        403,
+        "The demo account is shared with everyone trying MessMate, so its profile cannot be changed. Sign up for your own account to try this.",
+      );
+    }
     const messId = mess.id;
     const settings: MessSettings = {
       ...defaultSettings,
@@ -1066,6 +1091,136 @@ export async function POST(request: Request) {
         `${user.name} replaced the private join code`,
         "coral",
       );
+    } else if (action === "updateProfile") {
+      const name = cleanString(body.name, "Full name", 80);
+      const phone = optionalText(body.phone, 40);
+      const email = cleanEmail(body.email);
+      const previousEmail = user.email;
+      const emailChanged = email !== previousEmail;
+      if (emailChanged) {
+        // This address signs the account in and is what an invitation is
+        // matched on, so changing it needs the password that protects it.
+        const password = cleanString(body.currentPassword, "Current password", 200);
+        if (!(await verifyPassword(password, user.passwordSalt, user.passwordHash))) {
+          throw new ApiError(403, "That password is not correct.");
+        }
+        const taken = await db.collection<UserDocument>("users").findOne({ email });
+        if (taken && taken.id !== user.id) {
+          throw new ApiError(409, "Another account already uses that email address.");
+        }
+      }
+
+      const updatedAt = new Date().toISOString();
+      await db
+        .collection<UserDocument>("users")
+        .updateOne({ id: user.id }, { $set: { name, email, phone, updatedAt } });
+      // A member row keeps its own copy of the name and address, because an
+      // invited member has no account yet to read them from. Keep the copies
+      // in step for this person, in every mess they belong to.
+      await db
+        .collection<MemberDocument>("members")
+        .updateMany({ userId: user.id }, { $set: { name, email } });
+      // The response is rebuilt from this object, so it has to move too.
+      Object.assign(user, { name, email, phone, updatedAt });
+
+      if (emailChanged) {
+        // The old address is the only place a warning can reach if it was not
+        // the account's owner who made this change.
+        after(async () => {
+          const result = await sendMail(
+            emailChangedEmail({ to: previousEmail, name, newEmail: email }),
+          );
+          if (!result.ok) {
+            console.warn(
+              `[messmate] email-change notice to ${previousEmail} was not delivered: ${result.error}`,
+            );
+          }
+        });
+      }
+    } else if (action === "updateVisibility") {
+      // Whatever arrives is merged over the defaults, so a request that names
+      // one field, or an unknown level, cannot widen anything by accident.
+      const visibility = mergeVisibility(body.visibility);
+      await db
+        .collection<UserDocument>("users")
+        .updateOne(
+          { id: user.id },
+          { $set: { visibility, updatedAt: new Date().toISOString() } },
+        );
+      Object.assign(user, { visibility });
+    } else if (action === "changePassword") {
+      // Guessing the current password is worth throttling even behind a
+      // session, because a borrowed screen is the usual way this is abused.
+      const limit = rateLimit(`profile:password:${user.id}`, 8, 10 * 60_000);
+      if (!limit.ok) {
+        throw new ApiError(429, "Too many attempts. Please wait a few minutes and try again.", {
+          "Retry-After": String(limit.retryAfter),
+        });
+      }
+      const current = cleanString(body.currentPassword, "Current password", 200);
+      const next = cleanString(body.newPassword, "New password", 200);
+      if (next.length < 8) throw new ApiError(400, "Use a password of at least 8 characters.");
+      if (!(await verifyPassword(current, user.passwordSalt, user.passwordHash))) {
+        throw new ApiError(403, "That password is not correct.");
+      }
+      if (current === next) {
+        throw new ApiError(400, "That is already your password. Choose a different one.");
+      }
+
+      const credentials = await hashPassword(next);
+      await db.collection<UserDocument>("users").updateOne(
+        { id: user.id },
+        {
+          $set: {
+            passwordHash: credentials.hash,
+            passwordSalt: credentials.salt,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      );
+      Object.assign(user, { passwordHash: credentials.hash, passwordSalt: credentials.salt });
+      // Every other session ends, the same as a reset does: changing a password
+      // should not leave an old browser signed in. This one is kept, so the
+      // person is not thrown out of the page they just used.
+      await db
+        .collection("sessions")
+        .deleteMany({ userId: user.id, token: { $ne: session.token } });
+    } else if (action === "setAvatar") {
+      // The browser squares and shrinks the picture first, so anything this
+      // large is a client that skipped that step.
+      const dataUrl = cleanString(body.data, "Picture", 4_000_000);
+      const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+      if (!match) throw new ApiError(400, "A picture must be a JPEG, PNG or WebP image.");
+      const [, type, base64] = match;
+      const bytes = Buffer.byteLength(base64, "base64");
+      if (bytes > MAX_AVATAR_BYTES) {
+        throw new ApiError(400, "That picture is too large even after resizing. Try another one.");
+      }
+
+      const avatar: AvatarDocument = {
+        id: newId("avatar"),
+        userId: user.id,
+        type,
+        data: base64,
+        bytes,
+        createdAt: new Date().toISOString(),
+      };
+      await db.collection<AvatarDocument>("avatars").insertOne(avatar);
+      await db
+        .collection<UserDocument>("users")
+        .updateOne({ id: user.id }, { $set: { avatarId: avatar.id, updatedAt: avatar.createdAt } });
+      // A replacement gets a new id, so a picture already in a browser cache is
+      // never stale — only unreachable, which is why the old row goes.
+      await db
+        .collection<AvatarDocument>("avatars")
+        .deleteMany({ userId: user.id, id: { $ne: avatar.id } });
+      Object.assign(user, { avatarId: avatar.id });
+    } else if (action === "removeAvatar") {
+      await db.collection<AvatarDocument>("avatars").deleteMany({ userId: user.id });
+      await db
+        .collection<UserDocument>("users")
+        .updateOne({ id: user.id }, { $set: { avatarId: null, updatedAt: new Date().toISOString() } });
+      Object.assign(user, { avatarId: null });
     } else {
       throw new ApiError(400, "Unsupported workspace action.");
     }

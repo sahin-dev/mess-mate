@@ -11,7 +11,8 @@
     "seed": "node --env-file=.env scripts/seed.mjs",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run lint && npm run build",
-    "clean:test-houses": "node --env-file=.env scripts/remove-test-houses.mjs"
+    "clean:test-houses": "node --env-file=.env scripts/remove-test-houses.mjs",
+    "mail:test": "node --env-file=.env scripts/send-test-email.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

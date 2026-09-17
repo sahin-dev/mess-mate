@@ -34,6 +34,11 @@ export async function GET() {
       memberRollup,
       activity,
       signups,
+      signedInNow,
+      activeDay,
+      activeWeek,
+      activeMonth,
+      everSeen,
     ] = await Promise.all([
       db.collection("users").countDocuments(),
       db.collection("messes").countDocuments(),
@@ -80,6 +85,17 @@ export async function GET() {
         .limit(50)
         .toArray(),
       loadSignups(db),
+      // Signed in right now: a live session is one that has not expired. The
+      // collection has a TTL index, so expired rows are swept anyway, but the
+      // filter makes this correct in the window before the sweep runs.
+      db
+        .collection("sessions")
+        .distinct("userId", { expiresAt: { $gt: new Date() } })
+        .then((ids) => ids.filter(Boolean).length),
+      seenSince(db, 1),
+      seenSince(db, 7),
+      seenSince(db, 30),
+      db.collection("users").countDocuments({ lastSeenAt: { $exists: true } }),
     ]);
 
     const rollupByMess = new Map(memberRollup.map((row) => [row._id, row]));
@@ -112,6 +128,13 @@ export async function GET() {
         bazar,
         rooms,
         activeMesses: memberRollup.filter((row) => row.active > 0).length,
+        signedInNow,
+        activeDay,
+        activeWeek,
+        activeMonth,
+        // Nobody was being counted before this shipped, so while there are
+        // accounts that have never been seen the windows are an undercount.
+        activityPartial: everSeen < users,
       },
       messes: messDocs.map((mess) => {
         const rollup = rollupByMess.get(mess.id);
@@ -159,6 +182,18 @@ export async function GET() {
 
 const share = (value: number, total: number) =>
   total > 0 ? Math.round((value / total) * 100) : 0;
+
+/**
+ * Accounts that made a request within the last `days` days.
+ *
+ * `lastSeenAt` is written by the session layer, which is the only place that
+ * knows someone is actually here — a meal or a bazar entry carries the date it
+ * is *for*, which can be days either side of when it was typed.
+ */
+async function seenSince(db: Db, days: number) {
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+  return db.collection("users").countDocuments({ lastSeenAt: { $gte: cutoff } });
+}
 
 async function sumField(db: Db, collection: string, field: string) {
   const [row] = await db

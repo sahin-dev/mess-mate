@@ -171,7 +171,7 @@ function settleUp(members: MemberSettlement[], names: Map<string, string>) {
  * same for everyone who looks at it rather than being generated per render.
  */
 export function buildRoster(
-  members: { id: string; name: string; color: string; status: string }[],
+  members: { id: string; name: string; color: string; status: string; avatarId?: string | null }[],
   frequency: "alternate" | "daily" | "weekly" | "custom",
   timeZone: string,
   at: Date = new Date(),
@@ -196,6 +196,7 @@ export function buildRoster(
       memberId: member.id,
       name: member.name,
       color: member.color,
+      avatarId: member.avatarId ?? null,
     };
   });
 }

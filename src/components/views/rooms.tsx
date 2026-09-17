@@ -153,7 +153,7 @@ export function RoomsView() {
                   <ul className="resident-list">
                     {residents.map((member) => (
                       <li key={member.id}>
-                        <Avatar name={member.name} color={member.color} size="sm" />
+                        <Avatar name={member.name} color={member.color} size="sm" avatarId={member.avatarId} />
                         <span>
                           <strong>
                             {member.id === data.workspace.userId ? "You" : member.name}

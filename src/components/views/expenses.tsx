@@ -146,7 +146,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                   const mine = member.id === data.workspace.userId;
                   return (
                     <li key={member.id} className={mine ? "mine" : ""}>
-                      <Avatar name={member.name} color={member.color} size="sm" />
+                      <Avatar name={member.name} color={member.color} size="sm" avatarId={member.avatarId} />
                       <div className="balance-person">
                         <strong>{mine ? "You" : member.name}</strong>
                         <small>

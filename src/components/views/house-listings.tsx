@@ -316,6 +316,11 @@ function ListingModal({
   const { data, runAction, busy, isManager } = useWorkspace();
   const occupied = data.members.filter((member) => member.roomId === room.id).length;
   const free = Math.max(1, room.capacity - occupied);
+  const { userVisibility } = data.workspace;
+  const publicContact = {
+    phone: userVisibility.phone === "public",
+    email: userVisibility.email === "public",
+  };
 
   const [form, setForm] = useState({
     title: listing?.title ?? "",
@@ -324,8 +329,12 @@ function ListingModal({
     description: listing?.description ?? "",
     availableFrom: listing?.availableFrom ?? todayInZone(data.settings.timezone),
     contactName: listing?.contactName ?? data.workspace.userName,
-    contactPhone: listing?.contactPhone ?? "",
-    contactEmail: listing?.contactEmail ?? "",
+    // A new post starts from whichever of your own details you have already
+    // said anyone may see. A post keeps its own copy, so changing this later
+    // edits the post, not your profile — and a post that has been written
+    // before is left exactly as it was written.
+    contactPhone: listing?.contactPhone ?? (publicContact.phone ? data.workspace.userPhone : ""),
+    contactEmail: listing?.contactEmail ?? (publicContact.email ? data.workspace.userEmail : ""),
   });
   const [preferences, setPreferences] = useState<TenantPreferences>(
     mergePreferences(listing?.preferences, listing?.preferredOccupant),

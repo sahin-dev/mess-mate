@@ -235,3 +235,73 @@ export function settlementEmail(options: {
     }),
   };
 }
+
+export function welcomeEmail(options: { to: string; name: string }): MailMessage {
+  const link = appUrl("/join");
+  const text = [
+    `Welcome to MessMate, ${options.name}.`,
+    "",
+    "Your account is ready. MessMate keeps a shared home's meals, grocery runs",
+    "and bills in one place, and works out who owes whom at the end of the month.",
+    "",
+    "The next step is to join a mess. If someone invited you, they will have sent",
+    "you a join code. If you are setting one up yourself, you can create it from",
+    "the same page and invite everyone else afterwards.",
+    "",
+    `Start here: ${link}`,
+    "",
+    "If you did not create this account, please ignore this email.",
+  ].join("\n");
+
+  return {
+    to: options.to,
+    subject: "Welcome to MessMate",
+    text,
+    html: layout({
+      heading: `Welcome, ${options.name}`,
+      body: [
+        "Your account is ready. MessMate keeps a shared home's meals, grocery runs and bills in one place, and works out who owes whom at the end of the month.",
+        "The next step is to join a mess. If someone invited you, they will have sent you a join code — and if you are setting one up yourself, you can create it from the same page and invite everyone else afterwards.",
+        "If you did not create this account, please ignore this email.",
+      ],
+      action: { label: "Join or create a mess", href: link },
+    }),
+  };
+}
+
+/**
+ * Sent to the address being moved *away* from, which is the only warning an
+ * account has if someone else changed it.
+ */
+export function emailChangedEmail(options: {
+  to: string;
+  name: string;
+  newEmail: string;
+}): MailMessage {
+  const text = [
+    `Hello ${options.name},`,
+    "",
+    `The email address on your MessMate account was changed to ${options.newEmail}.`,
+    "You will need to sign in with the new address from now on.",
+    "",
+    "If you made this change, there is nothing to do.",
+    "",
+    "If you did not, someone else knows your password. Reset it straight away",
+    `from ${appUrl("/signin")} using the new address, and contact your mess manager.`,
+  ].join("\n");
+
+  return {
+    to: options.to,
+    subject: "Your MessMate email address was changed",
+    text,
+    html: layout({
+      heading: "Your email address was changed",
+      body: [
+        `Hello ${escapeHtml(options.name)}, the email address on your MessMate account was changed to <strong>${escapeHtml(options.newEmail)}</strong>. You will need to sign in with the new address from now on.`,
+        "If you made this change, there is nothing to do.",
+        "If you did not, someone else knows your password — reset it straight away using the new address, and contact your mess manager.",
+      ],
+      action: { label: "Go to MessMate", href: appUrl("/signin") },
+    }),
+  };
+}

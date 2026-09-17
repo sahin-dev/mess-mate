@@ -3,8 +3,10 @@ import { promisify } from "node:util";
 import { cookies, headers } from "next/headers";
 import type { Db } from "mongodb";
 import { isProduction, trustedOrigins } from "@/lib/env";
+import { isDemoUser } from "@/lib/demo";
+import { mergeVisibility } from "@/lib/visibility";
 import { getDb } from "@/lib/mongodb";
-import type { UserRole, Workspace } from "@/lib/types";
+import type { ProfileVisibility, UserRole, Workspace } from "@/lib/types";
 
 export const SESSION_COOKIE = "messmate_session";
 const SESSION_DAYS = 30;
@@ -24,6 +26,15 @@ export type UserDocument = {
   passwordSalt: string;
   isAdmin: boolean;
   createdAt: string;
+  /** Optional, and only ever shown to the rest of that person's own mess. */
+  phone?: string;
+  /** Points at an `avatars` document, or absent when initials are used. */
+  avatarId?: string | null;
+  /** Who can see the picture, address and phone. Absent means the defaults. */
+  visibility?: Partial<ProfileVisibility>;
+  /** Last time this account made a request. Absent until they next visit. */
+  lastSeenAt?: string;
+  updatedAt?: string;
 };
 
 export type SessionDocument = {
@@ -208,7 +219,33 @@ export async function readSession() {
   if (!session) return null;
   const user = await db.collection<UserDocument>("users").findOne({ id: session.userId });
   if (!user) return null;
+  await touchLastSeen(db, user);
   return { db, session, user };
+}
+
+/** How stale `lastSeenAt` may get before a request writes a fresh one. */
+const LAST_SEEN_INTERVAL_MS = 15 * 60_000;
+
+/**
+ * Records that this account is in use, for the admin dashboard's active-user
+ * figures. Nothing else in the app stores when a person last did something: a
+ * meal carries the date it is *for*, which someone can set days ahead.
+ *
+ * Written at most once every fifteen minutes per account, so the common case is
+ * a comparison against a document that has already been loaded, and a page made
+ * of many requests still costs one small write at most.
+ */
+async function touchLastSeen(db: Db, user: UserDocument) {
+  const now = Date.now();
+  const seen = user.lastSeenAt ? Date.parse(user.lastSeenAt) : 0;
+  if (Number.isFinite(seen) && now - seen < LAST_SEEN_INTERVAL_MS) return;
+  const lastSeenAt = new Date(now).toISOString();
+  // A failure here must never sign anybody out — it is only a statistic.
+  await db
+    .collection<UserDocument>("users")
+    .updateOne({ id: user.id }, { $set: { lastSeenAt } })
+    .catch(() => undefined);
+  user.lastSeenAt = lastSeenAt;
 }
 
 export async function requireSession() {
@@ -253,6 +290,10 @@ export async function workspaceFor(
     userId: user.id,
     userName: user.name,
     userEmail: user.email,
+    userPhone: user.phone ?? "",
+    isDemo: isDemoUser(user.id),
+    userVisibility: mergeVisibility(user.visibility),
+    userAvatarId: user.avatarId ?? null,
     memberCount,
   };
 }

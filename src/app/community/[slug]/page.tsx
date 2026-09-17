@@ -14,6 +14,7 @@ import {
   TriangleAlert,
   UserRound,
 } from "lucide-react";
+import { avatarUrl } from "@/lib/avatar";
 import { formatDate, formatMoney, pluralize } from "@/lib/format";
 import { getDb } from "@/lib/mongodb";
 import { FURNISHING_LABEL, PARKING_LABEL, propertySummary, roomHighlights } from "@/lib/property";
@@ -110,9 +111,20 @@ export default async function ListingPage({ params }: { params: Promise<{ slug: 
           {listing.description && (
             <section className="panel listing-section listing-post">
               <div className="listing-post-by">
-                <span className="listing-post-avatar" aria-hidden="true">
-                  <UserRound size={16} />
-                </span>
+                {listing.authorAvatarId ? (
+                  /* eslint-disable-next-line @next/next/no-img-element -- served
+                     from our own route at a fixed 256px, already downscaled. */
+                  <img
+                    className="listing-post-avatar"
+                    src={avatarUrl(listing.authorAvatarId)}
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : (
+                  <span className="listing-post-avatar" aria-hidden="true">
+                    <UserRound size={16} />
+                  </span>
+                )}
                 <div>
                   <strong>{listing.authorName || listing.contactName || "The house"}</strong>
                   <small>

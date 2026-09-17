@@ -1,6 +1,6 @@
 import { ensureIndexes, getDemoIdentity, type MemberDocument } from "@/lib/data";
 import { after } from "next/server";
-import { passwordResetEmail } from "@/lib/email-templates";
+import { passwordResetEmail, welcomeEmail } from "@/lib/email-templates";
 import { demoEnabled } from "@/lib/env";
 import { sendMail } from "@/lib/mail";
 import {
@@ -122,6 +122,14 @@ export async function POST(request: Request) {
       await clearSession();
       await createSession(user.id, null, null);
       resetRateLimit(throttleKey);
+      // The account already exists, so a mail server that is slow or down must
+      // not hold up the response or undo the signup.
+      after(async () => {
+        const result = await sendMail(welcomeEmail({ to: email, name }));
+        if (!result.ok) {
+          console.warn(`[messmate] welcome email to ${email} was not delivered: ${result.error}`);
+        }
+      });
       return Response.json({ user: { id: user.id, name, email }, workspace: null } satisfies AuthResponse, {
         status: 201,
       });
