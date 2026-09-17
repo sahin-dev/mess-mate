@@ -335,6 +335,11 @@ failed run — sends nothing extra.
 - Bazar receipts are stored inline with the entry and capped at 2 MB. Object
   storage would suit a large deployment better.
 - A member belongs to one mess at a time.
+- "Online now" on the admin dashboard counts accounts whose open tab reported in
+  within the last two minutes. It needs JavaScript, it counts an account rather
+  than a person (two of your own tabs are one), and it only began counting when
+  the feature shipped — so the dashboard says its own figures are incomplete
+  until every account has been seen at least once.
 - Email is sent inline after the response rather than through a queue, so a
   provider outage drops that message instead of retrying it.
 - Photos are stored as base64 in MongoDB, capped at 8 per post and ~1.5 MB

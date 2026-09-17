@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { PresencePing } from "@/components/presence-ping";
 import { useCallback, useEffect, useState } from "react";
 import { downloadCsv, formatDate, formatMoney, relativeTime } from "@/lib/format";
 import type { AdminData } from "@/lib/types";
@@ -100,6 +101,7 @@ export function AdminPortal({ userName }: { userName: string }) {
 
   return (
     <div className="admin-shell">
+      <PresencePing />
       <a className="skip-link" href="#admin-content">
         Skip to main content
       </a>
@@ -211,7 +213,7 @@ export function AdminPortal({ userName }: { userName: string }) {
                     downloadCsv("messmate-platform-summary.csv", [
                       ["Metric", "Value"],
                       ["Registered users", data.stats.users],
-                      ["Signed in now", data.stats.signedInNow],
+                      ["Online now", data.stats.onlineNow],
                       ["Active today", data.stats.activeDay],
                       ["Active this week", data.stats.activeWeek],
                       ["Active this month", data.stats.activeMonth],
@@ -283,9 +285,9 @@ function AdminOverview({
           tone="green"
         />
         <AdminMetric
-          label="Signed in now"
-          value={data.stats.signedInNow.toLocaleString()}
-          detail="Accounts holding a live session"
+          label="Online now"
+          value={data.stats.onlineNow.toLocaleString()}
+          detail="Tabs open and being looked at"
           icon={Radio}
           tone="coral"
         />

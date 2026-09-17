@@ -321,8 +321,12 @@ export type AdminData = {
     bazar: number;
     rooms: number;
     activeMesses: number;
-    /** Accounts holding a session that has not expired: signed in right now. */
-    signedInNow: number;
+    /**
+     * Accounts whose tab reported in within the presence window: people
+     * actually looking at the site. Not the same as holding a session, which
+     * lasts thirty days and says nothing about where anybody is now.
+     */
+    onlineNow: number;
     /** Accounts that made a request inside the window, by `lastSeenAt`. */
     activeDay: number;
     activeWeek: number;

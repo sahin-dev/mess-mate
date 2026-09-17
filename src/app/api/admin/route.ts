@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import type { Db } from "mongodb";
 import type { ActivityDocument, MemberDocument } from "@/lib/data";
 import { currentPeriod, periodShortLabel, shiftPeriod } from "@/lib/period";
+import { PRESENCE_WINDOW_MS } from "@/lib/presence";
 import { ApiError, jsonError, requireSession, type MessDocument, type UserDocument } from "@/lib/server-utils";
 import type { AdminData } from "@/lib/types";
 
@@ -34,7 +35,7 @@ export async function GET() {
       memberRollup,
       activity,
       signups,
-      signedInNow,
+      onlineNow,
       activeDay,
       activeWeek,
       activeMonth,
@@ -85,13 +86,12 @@ export async function GET() {
         .limit(50)
         .toArray(),
       loadSignups(db),
-      // Signed in right now: a live session is one that has not expired. The
-      // collection has a TTL index, so expired rows are swept anyway, but the
-      // filter makes this correct in the window before the sweep runs.
-      db
-        .collection("sessions")
-        .distinct("userId", { expiresAt: { $gt: new Date() } })
-        .then((ids) => ids.filter(Boolean).length),
+      // On the site now: an open, visible tab reports in once a minute, so the
+      // window is a couple of intervals wide. A live session is deliberately
+      // not used — it lasts thirty days and says nothing about where anyone is.
+      db.collection("users").countDocuments({
+        lastSeenAt: { $gte: new Date(Date.now() - PRESENCE_WINDOW_MS).toISOString() },
+      }),
       seenSince(db, 1),
       seenSince(db, 7),
       seenSince(db, 30),
@@ -128,7 +128,7 @@ export async function GET() {
         bazar,
         rooms,
         activeMesses: memberRollup.filter((row) => row.active > 0).length,
-        signedInNow,
+        onlineNow,
         activeDay,
         activeWeek,
         activeMonth,

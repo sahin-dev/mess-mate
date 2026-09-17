@@ -24,6 +24,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { formatDate, initialsOf, relativeTime } from "@/lib/format";
+import { PresencePing } from "@/components/presence-ping";
 import { periodLabel } from "@/lib/period";
 import type { WorkspaceData } from "@/lib/types";
 import {
@@ -76,6 +77,7 @@ export function WorkspaceShell({
 }) {
   return (
     <WorkspaceProvider initialData={initialData} renderOverlays={(state) => <Overlays {...state} />}>
+      <PresencePing />
       <ShellChrome>{children}</ShellChrome>
     </WorkspaceProvider>
   );
