@@ -10,11 +10,14 @@ import {
   MapPin,
   MoveVertical,
   Phone,
+  ScrollText,
   TriangleAlert,
+  UserRound,
 } from "lucide-react";
 import { formatDate, formatMoney, pluralize } from "@/lib/format";
 import { getDb } from "@/lib/mongodb";
 import { FURNISHING_LABEL, PARKING_LABEL, propertySummary, roomHighlights } from "@/lib/property";
+import { photoUrl } from "@/lib/listing-post";
 import { loadPublishedListing, type PublicListing } from "@/lib/public-listings";
 import { MapView } from "@/components/map-picker";
 
@@ -38,7 +41,7 @@ export async function generateMetadata({
   if (!listing) return { title: "Room not found", robots: { index: false, follow: false } };
 
   const where = [listing.property.area, listing.property.city].filter(Boolean).join(", ");
-  const title = `${listing.room.name} in ${listing.messName}${where ? `, ${where}` : ""}`;
+  const title = `${listing.title}${where ? `, ${where}` : ""}`;
   const description = `${pluralize(listing.seats, "space")} at ${formatMoney(
     listing.rentPerSeat,
   )} rent per person. About ${formatMoney(listing.costs.estimatedMonthlyTotal)} a month all in, including food and bills.`;
@@ -47,7 +50,13 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical: `/community/${slug}` },
-    openGraph: { title: `${title} | MessMate`, description, type: "article" },
+    openGraph: {
+      title: `${title} | MessMate`,
+      description,
+      type: "article",
+      // The cover photo is what a shared link shows, so it is worth setting.
+      images: listing.photos.length > 0 ? [photoUrl(listing.photos[0].id)] : undefined,
+    },
   };
 }
 
@@ -67,9 +76,7 @@ export default async function ListingPage({ params }: { params: Promise<{ slug: 
 
       <header className="listing-header">
         <div>
-          <h1>
-            {room.name} in {listing.messName}
-          </h1>
+          <h1>{listing.title}</h1>
           <p className="listing-where">
             <MapPin size={15} aria-hidden="true" />
             {propertySummary(property) || where || "Location not given"}
@@ -81,8 +88,52 @@ export default async function ListingPage({ params }: { params: Promise<{ slug: 
         </div>
       </header>
 
+      {listing.photos.length > 0 && (
+        <section className="listing-gallery" aria-label="Photos of the room">
+          {listing.photos.map((photo, index) => (
+            <figure key={photo.id} className={index === 0 ? "gallery-lead" : ""}>
+              {/* eslint-disable-next-line @next/next/no-img-element -- served
+                  from our own route, already downscaled, sized by CSS. */}
+              <img
+                src={photoUrl(photo.id)}
+                alt={photo.caption || `${listing.room.name}, photo ${index + 1}`}
+                loading={index === 0 ? "eager" : "lazy"}
+              />
+              {photo.caption && <figcaption>{photo.caption}</figcaption>}
+            </figure>
+          ))}
+        </section>
+      )}
+
       <div className="listing-layout">
         <div className="listing-body">
+          {listing.description && (
+            <section className="panel listing-section listing-post">
+              <div className="listing-post-by">
+                <span className="listing-post-avatar" aria-hidden="true">
+                  <UserRound size={16} />
+                </span>
+                <div>
+                  <strong>{listing.authorName || listing.contactName || "The house"}</strong>
+                  <small>
+                    {listing.authorRole === "manager" ? "Runs this house" : "Lives here"}
+                    {listing.publishedAt
+                      ? ` · posted ${formatDate(listing.publishedAt.slice(0, 10))}`
+                      : ""}
+                  </small>
+                </div>
+              </div>
+              {/* The post is plain text; each blank line starts a paragraph. */}
+              {listing.description
+                .split(/\n{2,}/)
+                .map((paragraph) => paragraph.trim())
+                .filter(Boolean)
+                .map((paragraph, index) => (
+                  <p key={index}>{paragraph}</p>
+                ))}
+            </section>
+          )}
+
           <section className="panel listing-section">
             <h2>The room</h2>
             <ul className="facility-chips">
@@ -114,8 +165,48 @@ export default async function ListingPage({ params }: { params: Promise<{ slug: 
               </div>
             </dl>
             {room.notes && <p className="listing-notes">{room.notes}</p>}
-            {listing.description && <p className="listing-description">{listing.description}</p>}
           </section>
+
+          {(listing.stated.length > 0 || listing.preferences.notes) && (
+            <section className="panel listing-section">
+              <h2>Who it would suit</h2>
+              <p className="listing-pref-note">
+                What the poster is hoping for, not a requirement.
+              </p>
+              {listing.stated.length > 0 && (
+                <dl className="listing-facts">
+                  {listing.stated.map((preference) => (
+                    <div key={preference.label}>
+                      <dt>{preference.label}</dt>
+                      <dd>{preference.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {listing.preferences.notes && (
+                <p className="listing-notes">{listing.preferences.notes}</p>
+              )}
+            </section>
+          )}
+
+          {listing.rules.length > 0 && (
+            <section className="panel listing-section">
+              <h2>
+                <ScrollText size={17} aria-hidden="true" /> House rules
+              </h2>
+              <p className="listing-pref-note">
+                Worth reading now rather than after you move in.
+              </p>
+              <ul className="listing-rules">
+                {listing.rules.map((rule) => (
+                  <li key={rule.id}>
+                    <Check size={14} aria-hidden="true" />
+                    <span>{rule.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <CostSection listing={listing} />
 

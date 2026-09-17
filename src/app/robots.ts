@@ -8,7 +8,8 @@ import { appUrl } from "@/lib/mail";
 export default function robots(): MetadataRoute.Robots {
   return {
     // "/$" matches the landing page only; everything else stays private.
-    rules: [{ userAgent: "*", allow: ["/$", "/community"], disallow: ["/"] }],
+    // /photo serves the images those community pages reference.
+    rules: [{ userAgent: "*", allow: ["/$", "/community", "/photo"], disallow: ["/"] }],
     sitemap: appUrl("/sitemap.xml"),
   };
 }

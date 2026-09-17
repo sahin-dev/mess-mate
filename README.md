@@ -182,16 +182,51 @@ Both are enforced on the server: a member who calls the API directly with
 someone else's id is silently pinned to their own entries, and every edit made on
 someone's behalf is written to the activity log with both names.
 
-## Community listings
+## Community: to-let posts
 
-A manager can advertise a room with a free space. **Publishing is an explicit,
+A room with a free space is advertised as a **post**, written in the poster's
+own words rather than assembled from fields. **Publishing is an explicit,
 per-room opt-in**, and the dialog says plainly what becomes public before the
 switch is turned on.
 
-A published listing is a public, indexable web page showing:
+### Who can write one
+
+| Who | Can write about | Goes public |
+| --- | --- | --- |
+| Manager | any room with a free space | immediately |
+| Member  | the room they live in | after the manager approves it |
+
+A member's post is saved as `pending` and appears at the top of the Community
+tab for the manager, who publishes it or sends it back as a draft. The reason
+for that extra step is not tidiness: publishing exposes the house's real monthly
+costs, which is the whole house's business, not one housemate's. A member can
+edit and delete their own post, and nobody else's.
+
+### What a post carries
+
+- a **headline** and a body, shown with the author's name and whether they run
+  the house or live in it;
+- up to **8 photos**, resized to 1600px in the browser before upload so a phone
+  photo does not become a 12 MB request. They are stored in their own
+  collection, not inside the listing, and served from `/photo/<id>` — outside
+  `/api`, because everything under there is blanket `no-store` for the private
+  workspace and a photo on a published post is meant to be cached. A photo on an
+  unpublished post is released only to that mess;
+- **who the room would suit** — occupation, gender, smoking, food, household and
+  religion, plus free text. Every one is optional, none of them filters search
+  results, and anything left on "no preference" is not mentioned on the post at
+  all. These fields exist because shared-accommodation adverts in Bangladesh
+  routinely state them; note that advertising housing by religion is restricted
+  in some other jurisdictions, so this is worth revisiting before launching
+  outside that market;
+- **house rules**, written as sentences, with suggestions to start from ("Lights
+  off by midnight — the room is shared."). The examples deliberately say what
+  *and* why, because a rule with a reason reads as fair rather than fussy.
+
+A published post is a public, indexable web page showing all of the above plus:
 
 - the room and what it has, the building, the parking arrangement, the
-  facilities, the map pin, and the manager's chosen contact details;
+  facilities, the map pin, and the poster's chosen contact details;
 - **what living there actually costs** — rent, plus food at the house's real
   meal rate, plus the real share of utilities, taken from the most recent
   *completed* month in that house's own records. The month in progress is
@@ -199,7 +234,8 @@ A published listing is a public, indexable web page showing:
   A house with no completed month shows the rent alone rather than a guess.
 
 Member names, email addresses and individual balances are never included in the
-public payload. Taking a listing down purges the cached pages immediately,
+public payload &mdash; the poster's own display name and the contact details
+they typed in are the only personal information on the page. Taking a listing down purges the cached pages immediately,
 though search engines may keep a copy for a while, which is outside the app's
 control.
 
@@ -301,10 +337,12 @@ failed run — sends nothing extra.
 - A member belongs to one mess at a time.
 - Email is sent inline after the response rather than through a queue, so a
   provider outage drops that message instead of retrying it.
-- Listings carry no photographs yet, which is the first thing most people want
-  to see.
-- There is no moderation queue: a published listing goes live immediately, and
-  nothing is verified. The public pages say so.
+- Photos are stored as base64 in MongoDB, capped at 8 per post and ~1.5 MB
+  each after the browser resizes them. Object storage would suit a large
+  deployment better.
+- There is no platform-wide moderation queue. A manager's post goes live
+  immediately and nothing is verified by MessMate; the public pages say so. A
+  member's post is checked by their own manager, but by nobody else.
 - Address search depends on the public Nominatim service, which is rate limited
   and can be slow; the map always allows dropping a pin by hand instead.
 - Browser extensions that rewrite credential inputs (password managers, throwaway

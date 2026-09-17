@@ -54,7 +54,9 @@ export function JoinFlow({
     try {
       return await callback();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Something went wrong.");
+      setError(
+        caught instanceof Error ? caught.message : "Something went wrong.",
+      );
       return null;
     } finally {
       setBusy(false);
@@ -90,10 +92,13 @@ export function JoinFlow({
       return;
     }
     const result = await run(() =>
-      requestJson<{ status: "joined" | "pending"; messName: string }>("/api/workspace", {
-        action: "joinMess",
-        joinCode: code,
-      }),
+      requestJson<{ status: "joined" | "pending"; messName: string }>(
+        "/api/workspace",
+        {
+          action: "joinMess",
+          joinCode: code,
+        },
+      ),
     );
     if (!result) return;
     // An invitation lets you straight in; anything else waits for a manager.
@@ -112,7 +117,9 @@ export function JoinFlow({
 
   const cancelRequest = async () => {
     const result = await run(() =>
-      requestJson<{ ok: boolean }>("/api/workspace", { action: "cancelJoinRequest" }),
+      requestJson<{ ok: boolean }>("/api/workspace", {
+        action: "cancelJoinRequest",
+      }),
     );
     if (result) {
       setRequest(null);
@@ -136,15 +143,21 @@ export function JoinFlow({
       {stage === "find" && (
         <div className="find-step">
           <header className="find-head">
-            <span className="auth-kicker">WELCOME, {userName.split(" ")[0].toUpperCase()}</span>
+            <span className="auth-kicker">
+              WELCOME, {userName.split(" ")[0].toUpperCase()}
+            </span>
             <h1>Find a room, or set up your own mess.</h1>
             <p>
-              Browse rooms to let with the real monthly cost of living there, or use a join code if
-              your housemates already run a mess here.
+              Browse rooms to let with the real monthly cost of living there, or
+              use a join code if your housemates already run a mess here.
             </p>
           </header>
 
-          <ListingSearch areas={areas} resultCount={listings.length} basePath="/join" />
+          <ListingSearch
+            areas={areas}
+            resultCount={listings.length}
+            basePath="/join"
+          />
 
           {listings.length === 0 ? (
             <p className="find-empty">
@@ -162,27 +175,37 @@ export function JoinFlow({
             </ul>
           )}
 
-          <div className="find-actions">
-            <button type="button" onClick={() => setStage("join")}>
-              <span className="choice-icon green" aria-hidden="true">
-                <KeyRound size={24} />
-              </span>
-              <span>
-                <strong>I have a join code</strong>
-                <small>Ask to join the mess your housemates already run.</small>
-              </span>
-              <ChevronRight size={18} aria-hidden="true" />
-            </button>
-            <button type="button" onClick={() => setStage("create")}>
-              <span className="choice-icon coral" aria-hidden="true">
-                <Building2 size={24} />
-              </span>
-              <span>
-                <strong>Create a new mess</strong>
-                <small>Set up the house, invite everyone and manage the month.</small>
-              </span>
-              <ChevronRight size={18} aria-hidden="true" />
-            </button>
+          <div className="find-actions-wrap">
+            <div className="find-actions-head">
+              <strong>Not looking to rent?</strong>
+              <span>Two other ways into MessMate.</span>
+            </div>
+            <div className="find-actions">
+              <button type="button" onClick={() => setStage("join")}>
+                <span className="choice-icon green" aria-hidden="true">
+                  <KeyRound size={24} />
+                </span>
+                <span>
+                  <strong>I have a join code</strong>
+                  <small>
+                    Ask to join the mess your housemates already run.
+                  </small>
+                </span>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+              <button type="button" onClick={() => setStage("create")}>
+                <span className="choice-icon coral" aria-hidden="true">
+                  <Building2 size={24} />
+                </span>
+                <span>
+                  <strong>Create a new mess</strong>
+                  <small>
+                    Set up the house, invite everyone and manage the month.
+                  </small>
+                </span>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -191,7 +214,9 @@ export function JoinFlow({
         <div className="auth-step auth-step-wide">
           <span className="auth-kicker">NEW MESS</span>
           <h1>Tell us about your mess.</h1>
-          <p>You can change all of this later, and add rooms once you are inside.</p>
+          <p>
+            You can change all of this later, and add rooms once you are inside.
+          </p>
           <form className="auth-form" onSubmit={createMess}>
             <label>
               Mess name
@@ -222,7 +247,10 @@ export function JoinFlow({
             </label>
             <label>
               How many people will live here?
-              <select value={memberCount} onChange={(event) => setMemberCount(event.target.value)}>
+              <select
+                value={memberCount}
+                onChange={(event) => setMemberCount(event.target.value)}
+              >
                 <option value="3">Up to 3</option>
                 <option value="5">4 to 5</option>
                 <option value="8">6 to 8</option>
@@ -234,8 +262,9 @@ export function JoinFlow({
             <p className="create-summary">
               <Users size={17} aria-hidden="true" />
               <span>
-                <strong>You will be the first manager.</strong> After setup, add your rooms and
-                record the first bazar run so MessMate can work out the meal rate.
+                <strong>You will be the first manager.</strong> After setup, add
+                your rooms and record the first bazar run so MessMate can work
+                out the meal rate.
               </span>
             </p>
 
@@ -244,7 +273,12 @@ export function JoinFlow({
                 {error}
               </p>
             )}
-            <ActionButton busy={busy} busyLabel="Creating…" className="auth-primary" type="submit">
+            <ActionButton
+              busy={busy}
+              busyLabel="Creating…"
+              className="auth-primary"
+              type="submit"
+            >
               Create mess <ChevronRight size={17} aria-hidden="true" />
             </ActionButton>
           </form>
@@ -260,9 +294,9 @@ export function JoinFlow({
           <h1>Enter your join code.</h1>
           <p>
             Your mess manager can find it under Members. It looks like{" "}
-            <strong>SHAPLA-7K4M</strong>. Entering it sends a request that a manager has to
-            accept &mdash; unless they have already invited your email, in which case you go
-            straight in.
+            <strong>SHAPLA-7K4M</strong>. Entering it sends a request that a
+            manager has to accept &mdash; unless they have already invited your
+            email, in which case you go straight in.
           </p>
           <form className="auth-form" onSubmit={joinMess}>
             <label>
@@ -287,15 +321,20 @@ export function JoinFlow({
                 {error}
               </p>
             )}
-            <ActionButton busy={busy} busyLabel="Sending…" className="auth-primary" type="submit">
+            <ActionButton
+              busy={busy}
+              busyLabel="Sending…"
+              className="auth-primary"
+              type="submit"
+            >
               Send a join request <ChevronRight size={17} aria-hidden="true" />
             </ActionButton>
           </form>
           <p className="join-safety">
             <LockKeyhole size={18} aria-hidden="true" />
             <span>
-              <strong>Only join people you know.</strong> Your name and email become visible to
-              everyone in that mess.
+              <strong>Only join people you know.</strong> Your name and email
+              become visible to everyone in that mess.
             </span>
           </p>
         </div>
@@ -309,8 +348,9 @@ export function JoinFlow({
           <span className="auth-kicker">WAITING FOR APPROVAL</span>
           <h1>Your request is with {request.messName}.</h1>
           <p>
-            A manager there has to accept you before you can see the mess. You will get in as soon
-            as they do &mdash; there is nothing else for you to do.
+            A manager there has to accept you before you can see the mess. You
+            will get in as soon as they do &mdash; there is nothing else for you
+            to do.
           </p>
 
           <ol className="pending-timeline">
@@ -336,14 +376,19 @@ export function JoinFlow({
           </button>
 
           <div className="pending-actions">
-            <button type="button" className="auth-secondary" disabled={busy} onClick={cancelRequest}>
+            <button
+              type="button"
+              className="auth-secondary"
+              disabled={busy}
+              onClick={cancelRequest}
+            >
               Cancel the request
             </button>
           </div>
 
           <SecureNote>
-            In a hurry? Ask your manager to invite your email address instead &mdash; an invitation
-            lets you in without waiting.
+            In a hurry? Ask your manager to invite your email address instead
+            &mdash; an invitation lets you in without waiting.
           </SecureNote>
         </div>
       )}
@@ -364,11 +409,15 @@ export function JoinFlow({
           <p className="code-warning">
             <LockKeyhole size={18} aria-hidden="true" />
             <span>
-              <strong>Keep the code private.</strong> Anyone who has it can join. You can generate a
-              new one at any time from Mess settings.
+              <strong>Keep the code private.</strong> Anyone who has it can
+              join. You can generate a new one at any time from Mess settings.
             </span>
           </p>
-          <button className="auth-primary" onClick={enterWorkspace} type="button">
+          <button
+            className="auth-primary"
+            onClick={enterWorkspace}
+            type="button"
+          >
             Open {messName} <ArrowUpRight size={17} aria-hidden="true" />
           </button>
         </div>

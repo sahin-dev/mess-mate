@@ -19,6 +19,7 @@ import type {
   WorkspaceData,
 } from "@/lib/types";
 import { mergeFacilities, mergeProperty, mergeRoom } from "@/lib/property";
+import { mergeListing } from "@/lib/listing-post";
 import {
   hashPassword,
   newId,
@@ -44,6 +45,22 @@ type RoomExtras = "attachedBathroom" | "balcony" | "airConditioned" | "furnishin
 export type RoomDocument = Omit<Room, RoomExtras> &
   Partial<Pick<Room, RoomExtras>> & { messId: string };
 export type ListingDocument = Omit<Listing, "roomName"> & { messId: string; createdAt: string };
+/**
+ * Photo bytes live in their own collection rather than inside the listing, so
+ * loading the community index never drags megabytes of base64 with it.
+ */
+export type ListingPhotoDocument = {
+  id: string;
+  messId: string;
+  listingId: string;
+  type: string;
+  /** Base64, without the data: prefix. */
+  data: string;
+  bytes: number;
+  width: number;
+  height: number;
+  createdAt: string;
+};
 export type MealDocument = MealEntry & { messId: string; userId: string };
 /** `createdBy` is the member who actually paid, which is what the settlement needs. */
 export type ExpenseDocument = Omit<Expense, "paidBy" | "paidById"> & {
@@ -106,6 +123,10 @@ export async function ensureIndexes(db: Db) {
     db.collection("listings").createIndex({ messId: 1 }),
     // The community index page lists published rooms, newest first.
     db.collection("listings").createIndex({ status: 1, publishedAt: -1 }),
+    // Photos are fetched one at a time by the serving route, and purged in
+    // bulk when a post is deleted.
+    db.collection("listingPhotos").createIndex({ id: 1 }, { unique: true }),
+    db.collection("listingPhotos").createIndex({ listingId: 1 }),
   ]);
 }
 
@@ -199,10 +220,12 @@ export async function getWorkspaceData(
     members,
     property,
     facilities,
-    listings: listings.map((listing) => ({
-      ...stripDocument(listing),
-      roomName: roomNames.get(listing.roomId) ?? "A removed room",
-    })),
+    listings: listings.map((listing) =>
+      mergeListing({
+        ...stripDocument(listing),
+        roomName: roomNames.get(listing.roomId) ?? "A removed room",
+      }),
+    ),
     rooms: rooms.map((room) =>
       mergeRoom({
         id: room.id,

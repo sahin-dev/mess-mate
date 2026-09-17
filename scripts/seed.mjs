@@ -44,6 +44,12 @@ const indexes = [
   ["expenses", { messId: 1, date: -1 }, {}],
   ["bazar", { messId: 1, date: -1 }, {}],
   ["activity", { messId: 1, createdAt: -1 }, {}],
+  ["rooms", { messId: 1 }, {}],
+  ["listings", { slug: 1 }, { unique: true }],
+  ["listings", { messId: 1 }, {}],
+  ["listings", { status: 1, publishedAt: -1 }, {}],
+  ["listingPhotos", { id: 1 }, { unique: true }],
+  ["listingPhotos", { listingId: 1 }, {}],
 ];
 
 const client = await connect();

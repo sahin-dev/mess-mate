@@ -37,15 +37,17 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // Nothing in MessMate is public, so no page should ever be cached by a proxy
-  // or announced by a server banner.
+  // The workspace is private and must never be cached by a proxy; the
+  // community pages are the deliberate exception. No server banner either way.
   poweredByHeader: false,
 
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
       {
-        // Every response is specific to the signed-in member.
+        // Every API response is specific to the signed-in member — except a
+        // photo on a published to-let post, which is public by design and sets
+        // its own caching, so it is excluded here rather than overridden.
         source: "/api/:path*",
         headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }],
       },

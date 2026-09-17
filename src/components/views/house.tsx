@@ -10,7 +10,7 @@ const TABS = [
   { href: "/house", label: "Building & flat" },
   { href: "/house/rooms", label: "Rooms" },
   { href: "/house/facilities", label: "Facilities" },
-  { href: "/house/listings", label: "Community", managerOnly: true },
+  { href: "/house/listings", label: "Community" },
 ];
 
 /**
@@ -18,7 +18,7 @@ const TABS = [
  * rather than four unrelated entries in the sidebar.
  */
 export function HouseShell({ children }: { children: React.ReactNode }) {
-  const { data, isManager } = useWorkspace();
+  const { data } = useWorkspace();
   const pathname = usePathname();
   const summary = propertySummary(data.property);
 
@@ -34,7 +34,7 @@ export function HouseShell({ children }: { children: React.ReactNode }) {
           aria-current — not an ARIA tablist, which would promise arrow-key
           navigation and a tabpanel that do not exist here. */}
       <nav className="settings-nav" aria-label="House sections">
-        {TABS.filter((tab) => !tab.managerOnly || isManager).map((tab) => (
+        {TABS.map((tab) => (
           <Link
             key={tab.href}
             href={tab.href}

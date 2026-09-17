@@ -7,6 +7,7 @@ import {
   type BazarDocument,
   type ExpenseDocument,
   type ListingDocument,
+  type ListingPhotoDocument,
   type MealDocument,
   type MemberDocument,
   type RoomDocument,
@@ -41,7 +42,20 @@ import {
   type MessDocument,
 } from "@/lib/server-utils";
 import { emptyProperty, slugify } from "@/lib/property";
-import type { Facility, MessProperty, MessSettings, Room, UserRole } from "@/lib/types";
+import {
+  MAX_PHOTO_BYTES,
+  MAX_PHOTOS,
+  mergePreferences,
+  mergeRules,
+} from "@/lib/listing-post";
+import type {
+  Facility,
+  MessProperty,
+  MessSettings,
+  Room,
+  TenantPreferences,
+  UserRole,
+} from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -761,7 +775,10 @@ export async function POST(request: Request) {
       }
       await addActivity(db, messId, "Member removed", `${user.name} removed ${member.name}`, "coral");
     } else if (action === "saveListing") {
-      requireManager(role);
+      // Members may write a post; only a manager may publish one, because
+      // publishing exposes the house's real costs. A member's post is saved as
+      // "pending" and the manager releases it.
+      const isManager = role === "manager" || role === "admin";
       const roomId = cleanString(body.roomId, "Room", 100);
       const room = await db.collection<RoomDocument>("rooms").findOne({ id: roomId, messId });
       if (!room) throw new ApiError(404, "That room no longer exists.");
@@ -774,33 +791,73 @@ export async function POST(request: Request) {
         ? await db.collection<ListingDocument>("listings").findOne({ id: cleanString(body.id, "Listing", 100), messId })
         : null;
 
+      // A member editing someone else's post would be editing the house's
+      // public face, so authorship is pinned to whoever created it.
+      if (existing && !isManager && existing.authorId && existing.authorId !== user.id) {
+        throw new ApiError(403, "Only the person who wrote this post, or a manager, can edit it.");
+      }
+
+      const requested = enumValue(
+        body.status ?? "draft",
+        ["draft", "pending", "published"] as const,
+        "Status",
+      );
+      // A member asking to publish is asking the manager to publish.
+      const status = !isManager && requested === "published" ? "pending" : requested;
+
+      const preferences = mergePreferences(body.preferences as Partial<TenantPreferences>);
       const now = new Date().toISOString();
       const listing: ListingDocument = {
         id: existing?.id ?? newId("listing"),
         messId,
         slug: existing?.slug ?? (await uniqueSlug(db, `${mess.name} ${room.name}`)),
         roomId,
-        status: enumValue(body.status ?? "draft", ["draft", "published"] as const, "Status"),
+        status,
+        title: optionalText(body.title, 120),
         seats,
         rentPerSeat: cleanNumber(body.rentPerSeat, "Rent per seat", 0),
-        description: optionalText(body.description, 2000),
+        description: optionalText(body.description, 4000),
         availableFrom: dateString(body.availableFrom ?? todayInZone(settings.timezone), "Available from"),
-        preferredOccupant: enumValue(
-          body.preferredOccupant ?? "anyone",
-          ["anyone", "students", "professionals"] as const,
-          "Preferred occupant",
-        ),
+        preferredOccupant: preferences.occupation,
+        preferences: {
+          occupation: enumValue(
+            preferences.occupation,
+            ["anyone", "students", "professionals"] as const,
+            "Occupation",
+          ),
+          gender: enumValue(preferences.gender, ["anyone", "men", "women"] as const, "Gender"),
+          smoking: enumValue(preferences.smoking, ["either", "non-smokers"] as const, "Smoking"),
+          food: enumValue(
+            preferences.food,
+            ["either", "vegetarian", "no-beef", "halal"] as const,
+            "Food",
+          ),
+          religion: optionalText(preferences.religion, 60),
+          maritalStatus: enumValue(
+            preferences.maritalStatus,
+            ["anyone", "single", "family"] as const,
+            "Household",
+          ),
+          notes: optionalText(preferences.notes, 400),
+        },
+        rules: mergeRules(body.rules).map((rule, index) => ({
+          id: rule.id || `rule-${index}`,
+          text: optionalText(rule.text, 180),
+        })),
+        photos: existing?.photos ?? [],
+        authorId: existing?.authorId ?? user.id,
+        authorName: existing?.authorName ?? user.name,
+        authorRole: existing?.authorRole ?? (isManager ? "manager" : "member"),
         // Contact details are typed in deliberately rather than taken from the
         // account, because publishing makes them public.
         contactName: optionalText(body.contactName, 80) || user.name,
         contactPhone: optionalText(body.contactPhone, 40),
         contactEmail: optionalText(body.contactEmail, 180),
-        publishedAt:
-          body.status === "published" ? (existing?.publishedAt ?? now) : (existing?.publishedAt ?? null),
+        publishedAt: status === "published" ? (existing?.publishedAt ?? now) : (existing?.publishedAt ?? null),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
-      if (listing.status === "published" && !listing.contactPhone && !listing.contactEmail) {
+      if (status !== "draft" && !listing.contactPhone && !listing.contactEmail) {
         throw new ApiError(400, "Add a phone number or an email so people can reach you.");
       }
 
@@ -810,15 +867,24 @@ export async function POST(request: Request) {
       // The community pages are cached, so publishing or editing has to purge
       // them; otherwise a taken-down room stays readable until the cache ages out.
       revalidateCommunity(listing.slug);
-      await addActivity(
-        db,
-        messId,
-        listing.status === "published" ? "Room listed publicly" : "Listing saved as a draft",
-        listing.status === "published"
-          ? `${user.name} published ${room.name} to the community`
-          : `${user.name} saved a draft listing for ${room.name}`,
-        listing.status === "published" ? "coral" : "blue",
-      );
+      const activity = {
+        published: {
+          title: "Room listed publicly",
+          detail: `${user.name} published ${room.name} to the community`,
+          tone: "coral" as const,
+        },
+        pending: {
+          title: "To-let post waiting for approval",
+          detail: `${user.name} wrote a post for ${room.name} and sent it to the manager`,
+          tone: "blue" as const,
+        },
+        draft: {
+          title: "Listing saved as a draft",
+          detail: `${user.name} saved a draft listing for ${room.name}`,
+          tone: "blue" as const,
+        },
+      }[listing.status];
+      await addActivity(db, messId, activity.title, activity.detail, activity.tone);
     } else if (action === "unpublishListing") {
       requireManager(role);
       const id = cleanString(body.id, "Listing", 100);
@@ -830,12 +896,124 @@ export async function POST(request: Request) {
       if (takenDown) revalidateCommunity(takenDown.slug);
       await addActivity(db, messId, "Listing taken down", `${user.name} removed a room from the community`, "coral");
     } else if (action === "deleteListing") {
-      requireManager(role);
       const id = cleanString(body.id, "Listing", 100);
       const doomed = await db.collection<ListingDocument>("listings").findOne({ id, messId });
-      const result = await db.collection<ListingDocument>("listings").deleteOne({ id, messId });
-      if (!result.deletedCount) throw new ApiError(404, "That listing no longer exists.");
-      if (doomed) revalidateCommunity(doomed.slug);
+      if (!doomed) throw new ApiError(404, "That listing no longer exists.");
+      // A member can delete the post they wrote; anything else is the manager's.
+      if (role !== "manager" && role !== "admin" && doomed.authorId !== user.id) {
+        requireManager(role);
+      }
+      await db.collection<ListingDocument>("listings").deleteOne({ id, messId });
+      // The bytes live in their own collection, so they have to go too.
+      await db.collection<ListingPhotoDocument>("listingPhotos").deleteMany({ listingId: id, messId });
+      revalidateCommunity(doomed.slug);
+    } else if (action === "addListingPhoto") {
+      const id = cleanString(body.id, "Listing", 100);
+      const listing = await db.collection<ListingDocument>("listings").findOne({ id, messId });
+      if (!listing) throw new ApiError(404, "That post no longer exists.");
+      if (role !== "manager" && role !== "admin" && listing.authorId !== user.id) {
+        throw new ApiError(403, "Only the person who wrote this post, or a manager, can edit it.");
+      }
+      if ((listing.photos ?? []).length >= MAX_PHOTOS) {
+        throw new ApiError(400, `A post can hold ${MAX_PHOTOS} photos.`);
+      }
+
+      // The browser downscales before sending, so anything this large is a
+      // client that skipped that step.
+      const dataUrl = cleanString(body.data, "Photo", 4_000_000);
+      const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+      if (!match) throw new ApiError(400, "Photos must be a JPEG, PNG or WebP image.");
+      const [, type, base64] = match;
+      const bytes = Buffer.byteLength(base64, "base64");
+      if (bytes > MAX_PHOTO_BYTES) {
+        throw new ApiError(400, "That photo is too large even after resizing. Try another one.");
+      }
+
+      const photo: ListingPhotoDocument = {
+        id: newId("photo"),
+        messId,
+        listingId: listing.id,
+        type,
+        data: base64,
+        bytes,
+        width: Math.round(cleanNumber(body.width ?? 0, "Width", 0, 20000)),
+        height: Math.round(cleanNumber(body.height ?? 0, "Height", 0, 20000)),
+        createdAt: new Date().toISOString(),
+      };
+      await db.collection<ListingPhotoDocument>("listingPhotos").insertOne(photo);
+      await db.collection<ListingDocument>("listings").updateOne(
+        { id: listing.id, messId },
+        {
+          $set: { updatedAt: photo.createdAt },
+          $push: {
+            photos: {
+              id: photo.id,
+              caption: optionalText(body.caption, 120),
+              width: photo.width,
+              height: photo.height,
+            },
+          },
+        },
+      );
+      revalidateCommunity(listing.slug);
+    } else if (action === "removeListingPhoto") {
+      const id = cleanString(body.id, "Listing", 100);
+      const photoId = cleanString(body.photoId, "Photo", 100);
+      const listing = await db.collection<ListingDocument>("listings").findOne({ id, messId });
+      if (!listing) throw new ApiError(404, "That post no longer exists.");
+      if (role !== "manager" && role !== "admin" && listing.authorId !== user.id) {
+        throw new ApiError(403, "Only the person who wrote this post, or a manager, can edit it.");
+      }
+      await db.collection<ListingPhotoDocument>("listingPhotos").deleteOne({ id: photoId, messId });
+      await db
+        .collection<ListingDocument>("listings")
+        .updateOne(
+          { id: listing.id, messId },
+          { $set: { updatedAt: new Date().toISOString() }, $pull: { photos: { id: photoId } } },
+        );
+      revalidateCommunity(listing.slug);
+    } else if (action === "approveListing") {
+      requireManager(role);
+      const id = cleanString(body.id, "Listing", 100);
+      const listing = await db.collection<ListingDocument>("listings").findOne({ id, messId });
+      if (!listing) throw new ApiError(404, "That post no longer exists.");
+      if (!listing.contactPhone && !listing.contactEmail) {
+        throw new ApiError(400, "That post has no contact details, so it cannot go public.");
+      }
+      const now = new Date().toISOString();
+      await db
+        .collection<ListingDocument>("listings")
+        .updateOne(
+          { id, messId },
+          { $set: { status: "published", publishedAt: listing.publishedAt ?? now, updatedAt: now } },
+        );
+      revalidateCommunity(listing.slug);
+      await addActivity(
+        db,
+        messId,
+        "To-let post published",
+        `${user.name} approved ${listing.authorName}'s post and put it on the community`,
+        "coral",
+      );
+    } else if (action === "rejectListing") {
+      requireManager(role);
+      const id = cleanString(body.id, "Listing", 100);
+      const listing = await db.collection<ListingDocument>("listings").findOne({ id, messId });
+      if (!listing) throw new ApiError(404, "That post no longer exists.");
+      await db
+        .collection<ListingDocument>("listings")
+        .updateOne(
+          { id, messId },
+          { $set: { status: "draft", updatedAt: new Date().toISOString() } },
+        );
+      revalidateCommunity(listing.slug);
+      await addActivity(
+        db,
+        messId,
+        "To-let post sent back",
+        `${user.name} sent ${listing.authorName}'s post back as a draft`,
+        "blue",
+      );
     } else if (action === "saveSettings") {
       requireManager(role);
       const incoming = body.settings as MessSettings | undefined;

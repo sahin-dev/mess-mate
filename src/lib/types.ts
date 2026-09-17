@@ -86,8 +86,50 @@ export type Facility = {
   detail: string;
 };
 
-export type ListingStatus = "draft" | "published";
+/**
+ * `pending` is a post a member wrote and sent for approval. Publishing exposes
+ * the house's real costs, so only a manager can take that last step.
+ */
+export type ListingStatus = "draft" | "pending" | "published";
 export type PreferredOccupant = "anyone" | "students" | "professionals";
+
+export type OccupantGender = "anyone" | "men" | "women";
+export type SmokingRule = "either" | "non-smokers";
+export type FoodPreference = "either" | "vegetarian" | "no-beef" | "halal";
+export type MaritalPreference = "anyone" | "single" | "family";
+
+/**
+ * Who the room would suit.
+ *
+ * Shared-accommodation adverts in Bangladesh routinely state these, which is
+ * why the fields exist. They are all optional, they are shown as the poster's
+ * stated preference rather than as a rule, and none of them is used to filter
+ * anybody out of search results.
+ */
+export type TenantPreferences = {
+  occupation: PreferredOccupant;
+  gender: OccupantGender;
+  smoking: SmokingRule;
+  food: FoodPreference;
+  /** Free text, because a fixed list would be wrong more often than right. */
+  religion: string;
+  maritalStatus: MaritalPreference;
+  /** Anything else about who would suit the room. */
+  notes: string;
+};
+
+/** A house rule, e.g. "Lights off by midnight — the room is shared." */
+export type HouseRule = {
+  id: string;
+  text: string;
+};
+
+export type ListingPhoto = {
+  id: string;
+  caption: string;
+  width: number;
+  height: number;
+};
 
 export type Listing = {
   id: string;
@@ -95,12 +137,22 @@ export type Listing = {
   roomId: string;
   roomName: string;
   status: ListingStatus;
+  /** The post headline, e.g. "Quiet room for a student, Uttara sector 7". */
+  title: string;
   /** How many people the manager wants to let the room to. */
   seats: number;
   rentPerSeat: number;
+  /** The body of the post, written in the poster's own words. */
   description: string;
   availableFrom: string;
   preferredOccupant: PreferredOccupant;
+  preferences: TenantPreferences;
+  rules: HouseRule[];
+  photos: ListingPhoto[];
+  /** Who wrote the post. The name is shown publicly; the id never is. */
+  authorId: string;
+  authorName: string;
+  authorRole: "manager" | "member";
   contactName: string;
   contactPhone: string;
   contactEmail: string;

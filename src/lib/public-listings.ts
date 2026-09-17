@@ -9,10 +9,25 @@ import type {
 } from "@/lib/data";
 import { periodLabel, shiftPeriod, type Period } from "@/lib/period";
 import { mergeFacilities, mergeProperty, mergeRoom } from "@/lib/property";
+import {
+  listingTitle,
+  mergePhotos,
+  mergePreferences,
+  mergeRules,
+  statedPreferences,
+} from "@/lib/listing-post";
 import type { MessDocument } from "@/lib/server-utils";
 import { computeSettlement } from "@/lib/settlement";
 import { periodInZone, normalizeTimezone } from "@/lib/timezone";
-import type { Facility, MessProperty, PreferredOccupant, Room } from "@/lib/types";
+import type {
+  Facility,
+  HouseRule,
+  ListingPhoto,
+  MessProperty,
+  PreferredOccupant,
+  Room,
+  TenantPreferences,
+} from "@/lib/types";
 
 /**
  * What a published listing shows to the world.
@@ -39,6 +54,16 @@ export type PublicCosts = {
 export type PublicListing = {
   slug: string;
   messName: string;
+  /** The post headline and body, written by whoever advertised the room. */
+  title: string;
+  photos: ListingPhoto[];
+  preferences: TenantPreferences;
+  /** Only the preferences actually stated, ready to render. */
+  stated: { label: string; value: string }[];
+  rules: HouseRule[];
+  /** The poster's display name and whether they run the house or live in it. */
+  authorName: string;
+  authorRole: "manager" | "member";
   property: MessProperty;
   room: Room;
   facilities: Facility[];
@@ -59,6 +84,12 @@ export type PublicListingCard = Pick<
   PublicListing,
   "slug" | "messName" | "seats" | "rentPerSeat" | "availableFrom" | "preferredOccupant"
 > & {
+  title: string;
+  /** The first photo, used as the card image. Null when the post has none. */
+  coverPhotoId: string | null;
+  photoCount: number;
+  ruleCount: number;
+  statedPreferences: { label: string; value: string }[];
   area: string;
   city: string;
   addressLine: string;
@@ -112,57 +143,107 @@ export async function loadPublishedListings(
   const messById = new Map(messes.map((mess) => [mess.id, mess]));
   const roomById = new Map(rooms.map((room) => [room.id, room]));
 
-  const cards = await Promise.all(
-    listings.map(async (listing) => {
+  // Costs are the expensive part — several queries per house — and no filter
+  // depends on them, so the cheap fields are built first, filtered and
+  // trimmed, and only the listings that actually make the page get priced.
+  const where = filters.where?.trim().toLowerCase();
+  const shortlist = listings
+    .map((listing) => {
       const mess = messById.get(listing.messId);
       const stored = roomById.get(listing.roomId);
       // A listing whose room or mess has been deleted simply does not appear.
       if (!mess || !stored) return null;
       const room = mergeRoom(stored);
       const property = mergeProperty(mess.property as Partial<MessProperty>, mess.location);
-      const costs = await summariseCosts(db, mess, listing.rentPerSeat);
+      const photos = mergePhotos(listing.photos);
       return {
-        slug: listing.slug,
-        messName: mess.name,
-        area: property.area,
-        city: property.city,
-        addressLine: property.addressLine,
-        roomName: room.name,
-        roomType: room.type,
-        attachedBathroom: room.attachedBathroom,
-        balcony: room.balcony,
-        airConditioned: room.airConditioned,
-        seats: listing.seats,
-        rentPerSeat: listing.rentPerSeat,
-        availableFrom: listing.availableFrom,
-        preferredOccupant: listing.preferredOccupant,
-        estimatedMonthlyTotal: costs.estimatedMonthlyTotal,
-        facilityCount: mergeFacilities(mess.facilities as Facility[]).filter((f) => f.available).length,
-      } satisfies PublicListingCard;
-    }),
-  );
-  const where = filters.where?.trim().toLowerCase();
-  return cards
-    .filter((card): card is PublicListingCard => card !== null)
-    .filter((card) => {
+        listing,
+        mess,
+        card: {
+          slug: listing.slug,
+          messName: mess.name,
+          area: property.area,
+          city: property.city,
+          addressLine: property.addressLine,
+          roomName: room.name,
+          roomType: room.type,
+          attachedBathroom: room.attachedBathroom,
+          balcony: room.balcony,
+          airConditioned: room.airConditioned,
+          seats: listing.seats,
+          rentPerSeat: listing.rentPerSeat,
+          availableFrom: listing.availableFrom,
+          preferredOccupant: listing.preferredOccupant,
+          title: listingTitle({ title: listing.title ?? "", roomName: room.name }, mess.name),
+          coverPhotoId: photos.length > 0 ? photos[0].id : null,
+          photoCount: photos.length,
+          ruleCount: mergeRules(listing.rules).length,
+          statedPreferences: statedPreferences(
+            mergePreferences(listing.preferences, listing.preferredOccupant),
+          ),
+          facilityCount: mergeFacilities(mess.facilities as Facility[]).filter((f) => f.available)
+            .length,
+        },
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .filter(({ card }) => {
       if (filters.attachedBathroom && !card.attachedBathroom) return false;
       if (filters.balcony && !card.balcony) return false;
       if (filters.airConditioned && !card.airConditioned) return false;
       if (!where) return true;
       // A person searching types a neighbourhood, not a field name.
-      return `${card.area} ${card.city} ${card.messName} ${card.addressLine}`
+      return `${card.area} ${card.city} ${card.messName} ${card.addressLine} ${card.title}`
         .toLowerCase()
         .includes(where);
     })
     .slice(0, limit);
+
+  // Several rooms in one house share a cost summary, so work it out once each.
+  const costsByMess = new Map<string, Promise<PublicCosts>>();
+  return Promise.all(
+    shortlist.map(async ({ listing, mess, card }) => {
+      const key = `${mess.id}:${listing.rentPerSeat}`;
+      let costs = costsByMess.get(key);
+      if (!costs) {
+        costs = summariseCosts(db, mess, listing.rentPerSeat);
+        costsByMess.set(key, costs);
+      }
+      return {
+        ...card,
+        estimatedMonthlyTotal: (await costs).estimatedMonthlyTotal,
+      } satisfies PublicListingCard;
+    }),
+  );
 }
 
 /** The areas that actually have rooms, for the "popular areas" shortcuts. */
 export async function loadListingAreas(db: Db) {
-  const cards = await loadPublishedListings(db, 200);
+  // Deliberately not loadPublishedListings: that computes a full cost summary
+  // per listing, and counting area names needs none of it. Going through it
+  // made this the slowest query on the page by a wide margin.
+  const listings = await db
+    .collection<ListingDocument>("listings")
+    .find({ status: "published" }, { projection: { messId: 1 } })
+    .limit(500)
+    .toArray();
+  if (!listings.length) return [];
+
+  const messIds = [...new Set(listings.map((listing) => listing.messId))];
+  const messes = await db
+    .collection<MessDocument>("messes")
+    .find({ id: { $in: messIds } }, { projection: { id: 1, property: 1, location: 1 } })
+    .toArray();
+  const areaByMess = new Map(
+    messes.map((mess) => {
+      const property = mergeProperty(mess.property as Partial<MessProperty>, mess.location);
+      return [mess.id, property.area || property.city];
+    }),
+  );
+
   const counts = new Map<string, number>();
-  for (const card of cards) {
-    const area = card.area || card.city;
+  for (const listing of listings) {
+    const area = areaByMess.get(listing.messId);
     if (area) counts.set(area, (counts.get(area) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -186,6 +267,13 @@ export async function loadPublishedListing(db: Db, slug: string): Promise<Public
   return {
     slug: listing.slug,
     messName: mess.name,
+    title: listingTitle({ title: listing.title ?? "", roomName: stored.name }, mess.name),
+    photos: mergePhotos(listing.photos),
+    preferences: mergePreferences(listing.preferences, listing.preferredOccupant),
+    stated: statedPreferences(mergePreferences(listing.preferences, listing.preferredOccupant)),
+    rules: mergeRules(listing.rules),
+    authorName: listing.authorName ?? "",
+    authorRole: listing.authorRole ?? "manager",
     property: mergeProperty(mess.property as Partial<MessProperty>, mess.location),
     room: mergeRoom(stored),
     facilities: mergeFacilities(mess.facilities as Facility[]).filter((facility) => facility.available),
@@ -232,17 +320,30 @@ async function summariseCosts(
     breakdown: [{ label: "Room rent", amount: rentPerSeat, note: "per person, per month" }],
   };
 
-  // Look back up to six months for one with something in it.
+  // Members and rooms do not vary by month, and the three ledgers are read for
+  // the whole six-month window in one query each. Probing month by month meant
+  // up to thirty round trips per house — and a house with no history paid all
+  // thirty before giving up.
+  const oldest = shiftPeriod(current, -6);
+  const newest = shiftPeriod(current, -1);
+  const window = { $gte: `${oldest}-01`, $lte: `${newest}-31` };
+  const [members, rooms, allMeals, allExpenses, allBazar] = await Promise.all([
+    db.collection<MemberDocument>("members").find({ messId: mess.id }).toArray(),
+    db.collection<RoomDocument>("rooms").find({ messId: mess.id }).toArray(),
+    db.collection<MealDocument>("meals").find({ messId: mess.id, date: window }).toArray(),
+    db.collection<ExpenseDocument>("expenses").find({ messId: mess.id, date: window }).toArray(),
+    db.collection<BazarDocument>("bazar").find({ messId: mess.id, date: window }).toArray(),
+  ]);
+  if (!allMeals.length && !allExpenses.length && !allBazar.length) return empty;
+
+  // Most recent completed month first.
   for (let back = 1; back <= 6; back += 1) {
     const period = shiftPeriod(current, -back);
-    const range = { $gte: `${period}-01`, $lte: `${period}-31` };
-    const [members, rooms, meals, expenses, bazar] = await Promise.all([
-      db.collection<MemberDocument>("members").find({ messId: mess.id }).toArray(),
-      db.collection<RoomDocument>("rooms").find({ messId: mess.id }).toArray(),
-      db.collection<MealDocument>("meals").find({ messId: mess.id, date: range }).toArray(),
-      db.collection<ExpenseDocument>("expenses").find({ messId: mess.id, date: range }).toArray(),
-      db.collection<BazarDocument>("bazar").find({ messId: mess.id, date: range }).toArray(),
-    ]);
+    const inMonth = <T extends { date: string }>(rows: T[]) =>
+      rows.filter((row) => row.date.startsWith(period));
+    const meals = inMonth(allMeals);
+    const expenses = inMonth(allExpenses);
+    const bazar = inMonth(allBazar);
     if (!meals.length && !expenses.length && !bazar.length) continue;
 
     const settlement = computeSettlement({
