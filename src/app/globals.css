@@ -4553,6 +4553,9 @@ select:disabled {
     align-items: center;
   }
 
+  .landing-footer nav a,
+  .public-footer nav a { min-height: 40px; display: inline-flex; align-items: center; }
+  .landing-more { min-height: 44px; }
   .button-tiny { min-height: 38px; }
   .area-chips a { min-height: 40px; }
   .settlement-action,

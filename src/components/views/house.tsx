@@ -30,19 +30,21 @@ export function HouseShell({ children }: { children: React.ReactNode }) {
         description={summary || "Add the address, rooms and facilities so everyone has the details."}
       />
 
-      <div className="settings-nav" role="tablist" aria-label="House sections">
+      {/* These navigate between pages, so they are links marked with
+          aria-current — not an ARIA tablist, which would promise arrow-key
+          navigation and a tabpanel that do not exist here. */}
+      <nav className="settings-nav" aria-label="House sections">
         {TABS.filter((tab) => !tab.managerOnly || isManager).map((tab) => (
           <Link
             key={tab.href}
             href={tab.href}
-            role="tab"
-            aria-selected={pathname === tab.href}
+            aria-current={pathname === tab.href ? "page" : undefined}
             className={pathname === tab.href ? "active" : ""}
           >
             {tab.label}
           </Link>
         ))}
-      </div>
+      </nav>
 
       {children}
     </>

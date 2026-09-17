@@ -10,7 +10,8 @@
     "lint": "eslint",
     "seed": "node --env-file=.env scripts/seed.mjs",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run build"
+    "check": "npm run typecheck && npm run lint && npm run build",
+    "clean:test-houses": "node --env-file=.env scripts/remove-test-houses.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

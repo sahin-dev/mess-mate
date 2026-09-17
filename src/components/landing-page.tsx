@@ -28,16 +28,24 @@ import type { PublicListingCard } from "@/lib/public-listings";
  * without scripting and is fully indexable. The live listings below are real
  * rows from the database rather than decoration.
  */
-export function LandingPage({ listings }: { listings: PublicListingCard[] }) {
+export function LandingPage({
+  listings,
+  totalListings,
+}: {
+  /** The teaser sample, at most six. */
+  listings: PublicListingCard[];
+  /** Every published room, which is what the copy quotes. */
+  totalListings: number;
+}) {
   return (
     <div className="landing">
       <LandingHeader />
       <main id="main-content">
-        <Hero listings={listings} />
+        <Hero total={totalListings} />
         <RateExplainer />
         <HowItWorks />
         <Features />
-        {listings.length > 0 && <CommunityTeaser listings={listings} />}
+        {listings.length > 0 && <CommunityTeaser listings={listings} total={totalListings} />}
         <Faq />
         <FinalCta />
       </main>
@@ -70,7 +78,7 @@ function LandingHeader() {
   );
 }
 
-function Hero({ listings }: { listings: PublicListingCard[] }) {
+function Hero({ total }: { total: number }) {
   return (
     <section className="landing-hero">
       <div className="landing-hero-copy">
@@ -91,9 +99,7 @@ function Hero({ listings }: { listings: PublicListingCard[] }) {
             Start your mess free <ArrowRight size={17} aria-hidden="true" />
           </Link>
           <Link className="button button-outline button-lg" href="/community">
-            {listings.length > 0
-              ? `Browse ${pluralize(listings.length, "room")} to let`
-              : "Browse rooms to let"}
+            {total > 0 ? `Browse ${pluralize(total, "room")} to let` : "Browse rooms to let"}
           </Link>
         </div>
         <ul className="landing-assurances">
@@ -313,7 +319,13 @@ function Features() {
   );
 }
 
-function CommunityTeaser({ listings }: { listings: PublicListingCard[] }) {
+function CommunityTeaser({
+  listings,
+  total,
+}: {
+  listings: PublicListingCard[];
+  total: number;
+}) {
   return (
     <section className="landing-community">
       <div className="landing-section-head">
@@ -364,7 +376,7 @@ function CommunityTeaser({ listings }: { listings: PublicListingCard[] }) {
       </ul>
 
       <Link className="landing-more" href="/community">
-        See every room <ChevronRight size={15} aria-hidden="true" />
+        See all {pluralize(total, "room")} <ChevronRight size={15} aria-hidden="true" />
       </Link>
     </section>
   );

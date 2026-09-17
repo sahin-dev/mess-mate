@@ -292,3 +292,8 @@ async function summariseCosts(
 
   return empty;
 }
+
+/** The real number of published rooms, for copy that quotes a total. */
+export async function countPublishedListings(db: Db): Promise<number> {
+  return db.collection<ListingDocument>("listings").countDocuments({ status: "published" });
+}

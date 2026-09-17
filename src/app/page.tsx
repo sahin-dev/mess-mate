@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getDb } from "@/lib/mongodb";
-import { loadPublishedListings, type PublicListingCard } from "@/lib/public-listings";
+import {
+  countPublishedListings,
+  loadPublishedListings,
+  type PublicListingCard,
+} from "@/lib/public-listings";
 import { readSession } from "@/lib/server-utils";
 import { LandingPage } from "@/components/landing-page";
 
@@ -31,10 +35,17 @@ export default async function RootPage() {
   }
 
   let listings: PublicListingCard[] = [];
+  // The teaser shows six; the call to action quotes the real total, which is
+  // usually larger.
+  let totalListings = 0;
   try {
-    listings = await loadPublishedListings(await getDb(), 6);
+    const db = await getDb();
+    [listings, totalListings] = await Promise.all([
+      loadPublishedListings(db, 6),
+      countPublishedListings(db),
+    ]);
   } catch {
     // The landing page must still render when the database is unreachable.
   }
-  return <LandingPage listings={listings} />;
+  return <LandingPage listings={listings} totalListings={totalListings} />;
 }

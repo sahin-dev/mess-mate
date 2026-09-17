@@ -54,6 +54,7 @@ pnpm run check       # typecheck, lint and production build
 pnpm run build       # production build
 pnpm run start       # serve the production build
 pnpm run seed        # create database indexes
+pnpm run clean:test-houses   # list houses left by end-to-end runs (add -- --delete to remove)
 ```
 
 ## Configuration
@@ -85,7 +86,8 @@ the rest of the app is served `noindex`.
 | Path                     | Who                                              |
 | ------------------------ | ------------------------------------------------ |
 | `/`                      | **Public.** Landing page. Signed-in visitors are redirected to their mess |
-| `/signin`, `/join`       | Signed out, or signed in without a mess          |
+| `/signin`                | Signed out                                       |
+| `/join`                  | Signed in without a mess: search rooms, enter a code, or start a house |
 | `/reset`                 | Password reset, reached from the emailed link    |
 | `/dashboard`             | Overview: rate, your position, who pays whom     |
 | `/meals`                 | Your own meal entries for the month              |
@@ -136,6 +138,37 @@ no billing account. Address search is proxied through `/api/geocode` rather than
 called from the browser, which keeps Nominatim's usage policy satisfied and the
 content security policy free of third-party `connect-src` entries.
 
+## Membership
+
+Nobody is tied to a house. An account can hold a membership, ask for one, or
+hold none at all, and where sign-in lands depends on which:
+
+- **No mess** &rarr; `/join`, the room finder. Search published rooms by area,
+  enter a join code, or start a house.
+- **A mess** &rarr; `/dashboard`, that house's overview.
+
+### Joining
+
+Entering a join code raises a **request**; it does not grant access. The
+manager sees it at the top of `/members` and either accepts or rejects it.
+Accepting can assign a room in the same dialog. Until then the requester waits
+on `/join`, and may cancel.
+
+An **invitation** is the opposite direction, so it needs no second approval: a
+person who signs in against an invited row joins immediately, and their
+membership id is re-keyed to their account id.
+
+> That re-keying matters. `computeSettlement()` attributes meals by
+> `member.id`, so for any account-backed membership `member.id` must equal
+> `user.id` &mdash; otherwise meals are recorded against a row nobody owns and
+> silently vanish from the rate.
+
+### Leaving
+
+Any member can leave from `/members`. Two things block it: the owner cannot
+leave their own house, and unsettled bazar must be resolved first, so a
+departure cannot erase money the house still owes.
+
 ## Recording for someone else
 
 A manager can record meals and bazar on behalf of any active member — for
@@ -170,8 +203,17 @@ public payload. Taking a listing down purges the cached pages immediately,
 though search engines may keep a copy for a while, which is outside the app's
 control.
 
-`/community` is the only part of the app `robots.txt` allows; everything else
-stays `noindex`.
+### Finding a room
+
+`/community` and the signed-in finder at `/join` share one search component, so
+both behave identically. A free-text box matches the house name, area, city and
+address line; the popular-area chips are generated from what is actually
+published, not a fixed list; and the collapsed filter panel narrows by rent,
+seats, attached bathroom, balcony and air conditioning. Every filter lives in
+the query string, so a search can be bookmarked and shared.
+
+`/` and `/community` (with its listing pages) are the only parts of the app
+`robots.txt` allows; everything else stays `noindex`.
 
 ## Time and timezones
 
