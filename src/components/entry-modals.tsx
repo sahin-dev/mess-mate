@@ -24,7 +24,15 @@ export function AddExpenseModal({ onClose }: { onClose: () => void }) {
 
   const amount = Number(form.amount) || 0;
   const perMember = amount / Math.max(1, activeMembers.length);
-  const roomsExist = data.rooms.some((room) => room.rent > 0);
+  const rentByRoom = new Map(data.rooms.map((room) => [room.id, room.rent]));
+  const rentedRoomsExist = data.rooms.some((room) => room.rent > 0);
+  // The by-room split divides a bill by what each member pays in rent, so it
+  // needs someone active actually living in a room that charges rent. Without
+  // that the settlement falls back to an equal split, which is not what the
+  // option promises, so the option stays out of reach until it can work.
+  const roomSplitWorks = activeMembers.some(
+    (member) => member.roomId && (rentByRoom.get(member.roomId) ?? 0) > 0,
+  );
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -119,7 +127,7 @@ export function AddExpenseModal({ onClose }: { onClose: () => void }) {
             }
           >
             <option>All members equally</option>
-            <option disabled={!roomsExist}>By room</option>
+            <option disabled={!roomSplitWorks}>By room</option>
           </select>
         </label>
 
@@ -131,7 +139,10 @@ export function AddExpenseModal({ onClose }: { onClose: () => void }) {
               : amount > 0
                 ? `${formatMoney(perMember)} each, across ${activeMembers.length} active members.`
                 : `Divided equally between ${activeMembers.length} active members.`}
-            {!roomsExist && " Add rooms with rent to enable the by-room split."}
+            {!roomSplitWorks &&
+              (rentedRoomsExist
+                ? " Move members into rooms to enable the by-room split."
+                : " Add rooms with rent, and move members into them, to enable the by-room split.")}
           </p>
         </div>
 
