@@ -71,7 +71,7 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
   "/bazar": { title: "Bazar & groceries", subtitle: "Track purchases, receipts and the duty roster." },
   "/expenses": { title: "Expenses", subtitle: "See where every taka goes and how it is shared." },
   "/house": { title: "The house", subtitle: "Address, rooms, facilities and what you advertise." },
-  "/members": { title: "Members", subtitle: "Invite people and keep every balance transparent." },
+  "/members": { title: "Members", subtitle: "See housemates, room assignments and balances in one place." },
   "/settings": { title: "Mess settings", subtitle: "Set the rules once and MessMate applies them for everyone." },
 };
 
@@ -130,7 +130,10 @@ function ShellChrome({ children }: { children: ReactNode }) {
     router.replace("/signin");
   };
 
-  const pendingBazar = data.bazar.filter((entry) => entry.status === "Pending").length;
+  const pendingBazar = data.bazar.filter(
+    (entry) =>
+      entry.status === "Pending" && (isManager || entry.memberId === data.workspace.userId),
+  ).length;
   const joinRequests = data.members.filter((member) => member.status === "requested").length;
   const badgeFor = (href: string) =>
     href === "/bazar" ? pendingBazar : href === "/members" && isManager ? joinRequests : 0;
@@ -197,7 +200,15 @@ function ShellChrome({ children }: { children: ReactNode }) {
                     <Icon size={18} aria-hidden="true" />
                     <span>{label}</span>
                     {badgeFor(href) > 0 && (
-                      <i aria-label={`${badgeFor(href)} awaiting attention`}>{badgeFor(href)}</i>
+                      <i
+                        aria-label={
+                          href === "/bazar" && !isManager
+                            ? `${badgeFor(href)} of your entries awaiting approval`
+                            : `${badgeFor(href)} awaiting attention`
+                        }
+                      >
+                        {badgeFor(href)}
+                      </i>
                     )}
                   </Link>
                 </li>
@@ -477,15 +488,19 @@ function QuickActions({ onClose }: { onClose: () => void }) {
       href: "/expenses",
     },
     {
-      label: "Manage members",
-      description: "Invite housemates or review join requests.",
+      label: isManager ? "Manage members" : "View housemates",
+      description: isManager
+        ? "Invite housemates or review join requests."
+        : "See housemates, room assignments and balances.",
       keywords: "invite join people housemates",
       icon: Users,
       href: "/members",
     },
     {
-      label: "Update house details",
-      description: "Edit rooms, facilities and listings.",
+      label: isManager ? "Update house details" : "View house details",
+      description: isManager
+        ? "Edit rooms, facilities and listings."
+        : "See your building, room and shared facilities.",
       keywords: "room rent facilities address listing",
       icon: Home,
       href: "/house",

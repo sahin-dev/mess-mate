@@ -6,21 +6,24 @@ import {
   ArrowUpRight,
   Check,
   ChevronRight,
+  ClipboardCheck,
   Clock3,
   CookingPot,
   Handshake,
+  Megaphone,
   Minus,
   Plus,
   ShoppingBasket,
   Sparkles,
+  UserPlus,
   Utensils,
   WalletCards,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { formatDate, formatMoney, pluralize, relativeTime } from "@/lib/format";
+import { formatDate, formatMoney, pluralize, relativeTime, signedMoney } from "@/lib/format";
 import { daysLeftInPeriod, periodLabel } from "@/lib/period";
-import { periodInZone, todayInZone } from "@/lib/timezone";
+import { cutoffHasPassed, periodInZone, todayInZone } from "@/lib/timezone";
 import type { MealEntry, MealKey } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState } from "@/components/ui";
 import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
@@ -40,9 +43,27 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
   const activeMembers = data.members.filter((member) => member.status === "active");
   const me = data.members.find((member) => member.id === workspace.userId);
   const timeZone = data.settings.timezone;
+  const [loadedAt] = useState(() => Date.now());
   const isCurrentPeriod = data.period === periodInZone(timeZone);
   const daysLeft = daysLeftInPeriod(data.period, timeZone);
   const pending = data.bazar.filter((entry) => entry.status === "Pending");
+  const joinRequests = data.members.filter((member) => member.status === "requested");
+  const pendingListings = data.listings.filter((listing) => listing.status === "pending");
+  const ownPending = pending.filter((entry) => entry.memberId === workspace.userId);
+  const today = todayInZone(timeZone);
+  const hasTodayEntry = data.meals.some((entry) => entry.date === today);
+  const canEditToday =
+    isManager ||
+    data.settings.allowAnytime ||
+    !cutoffHasPassed(timeZone, data.settings.cutoff, new Date(loadedAt));
+  const attentionCount = pending.length + joinRequests.length + pendingListings.length;
+  const attentionHref = pending.length
+    ? "/bazar"
+    : joinRequests.length
+      ? "/members"
+      : pendingListings.length
+        ? "/house/listings"
+        : undefined;
 
   // A brand-new mess has nothing to show, so send the manager through setup
   // instead of a dashboard full of zeros.
@@ -59,52 +80,103 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
       <PeriodStrip
         daysLeft={daysLeft}
         isCurrentPeriod={isCurrentPeriod}
-        pendingCount={pending.length}
+        isManager={isManager}
+        hasTodayEntry={hasTodayEntry}
+        canEditToday={canEditToday}
+        ownPendingCount={ownPending.length}
+        pendingBazarCount={pending.length}
+        joinRequestCount={joinRequests.length}
+        pendingListingCount={pendingListings.length}
         onAddExpense={onAddExpense}
-        canAddExpense={isManager}
       />
+
+      {isManager && attentionCount > 0 && (
+        <ManagerInbox
+          pendingBazarCount={pending.length}
+          pendingBazarTotal={settlement.pendingBazarTotal}
+          joinRequestCount={joinRequests.length}
+          pendingListingCount={pendingListings.length}
+        />
+      )}
 
       {showSetup && <SetupChecklist tasks={setupTasks} />}
 
       <section className="metrics-grid" aria-label="Key figures">
-        <MetricCard
-          eyebrow="Meal rate"
-          value={settlement.totalMeals > 0 ? formatMoney(settlement.mealRate, { decimals: true }) : "—"}
-          meta={
-            settlement.totalMeals > 0
-              ? `${formatMoney(settlement.bazarTotal)} bazar ÷ ${settlement.totalMeals} meals`
-              : "Add bazar and meals to calculate"
-          }
-          icon={Utensils}
-          tone="sage"
-          delta={mealRateDelta(data.trend, data.period)}
-        />
-        <MetricCard
-          eyebrow="Your meals"
-          value={String(me?.meals ?? 0)}
-          meta={`${formatMoney(me?.mealCost ?? 0)} of food this month`}
-          icon={CookingPot}
-          tone="sand"
-        />
-        <MetricCard
-          eyebrow="Mess spend"
-          value={formatMoney(settlement.bazarTotal + settlement.expenseTotal)}
-          meta={`${formatMoney(settlement.bazarTotal)} bazar + ${formatMoney(settlement.expenseTotal)} bills`}
-          icon={WalletCards}
-          tone="blue"
-        />
-        <MetricCard
-          eyebrow="Awaiting approval"
-          value={String(pending.length)}
-          meta={
-            pending.length > 0
-              ? `${formatMoney(settlement.pendingBazarTotal)} not yet counted`
-              : "Everything is reviewed"
-          }
-          icon={Clock3}
-          tone={pending.length > 0 ? "rose" : "sage"}
-          href="/bazar"
-        />
+        {isManager ? (
+          <>
+            <MetricCard
+              eyebrow="Current meal rate"
+              value={settlement.totalMeals > 0 ? formatMoney(settlement.mealRate, { decimals: true }) : "—"}
+              meta={
+                settlement.totalMeals > 0
+                  ? `${formatMoney(settlement.bazarTotal)} across ${settlement.totalMeals} meals`
+                  : "Needs approved bazar and meals"
+              }
+              icon={Utensils}
+              tone="sage"
+              delta={mealRateDelta(data.trend, data.period)}
+            />
+            <MetricCard
+              eyebrow="Approved bazar"
+              value={formatMoney(settlement.bazarTotal)}
+              meta={pending.length ? `${pluralize(pending.length, "entry", "entries")} still pending` : "Everything is approved"}
+              icon={ShoppingBasket}
+              tone="sand"
+              href="/bazar"
+            />
+            <MetricCard
+              eyebrow="Shared bills"
+              value={formatMoney(settlement.expenseTotal)}
+              meta={`${pluralize(data.expenses.length, "expense")} recorded`}
+              icon={WalletCards}
+              tone="blue"
+              href="/expenses"
+            />
+            <MetricCard
+              eyebrow="Needs attention"
+              value={String(attentionCount)}
+              meta={attentionCount ? "Approvals or requests to review" : "Nothing is waiting on you"}
+              icon={ClipboardCheck}
+              tone={attentionCount ? "rose" : "sage"}
+              href={attentionHref}
+            />
+          </>
+        ) : (
+          <>
+            <MetricCard
+              eyebrow="Your balance"
+              value={signedMoney(me?.balance ?? 0)}
+              meta={balanceLabel(me?.balance ?? 0)}
+              icon={WalletCards}
+              tone={(me?.balance ?? 0) < 0 ? "rose" : "sage"}
+              href="/expenses"
+            />
+            <MetricCard
+              eyebrow="Your meals"
+              value={String(me?.meals ?? 0)}
+              meta={`${formatMoney(me?.mealCost ?? 0)} of food this month`}
+              icon={CookingPot}
+              tone="sand"
+              href="/meals"
+            />
+            <MetricCard
+              eyebrow="Current meal rate"
+              value={settlement.totalMeals > 0 ? formatMoney(settlement.mealRate, { decimals: true }) : "—"}
+              meta={settlement.totalMeals > 0 ? "For every meal this month" : "Waiting for approved bazar"}
+              icon={Utensils}
+              tone="blue"
+              delta={mealRateDelta(data.trend, data.period)}
+            />
+            <MetricCard
+              eyebrow="You paid"
+              value={formatMoney(me?.paid ?? 0)}
+              meta={ownPending.length ? `${pluralize(ownPending.length, "bazar entry", "bazar entries")} awaiting approval` : "Approved payments credited to you"}
+              icon={ShoppingBasket}
+              tone={ownPending.length ? "rose" : "sage"}
+              href="/bazar"
+            />
+          </>
+        )}
       </section>
 
       <div className="dashboard-grid">
@@ -160,43 +232,71 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
 function PeriodStrip({
   daysLeft,
   isCurrentPeriod,
-  pendingCount,
+  isManager,
+  hasTodayEntry,
+  canEditToday,
+  ownPendingCount,
+  pendingBazarCount,
+  joinRequestCount,
+  pendingListingCount,
   onAddExpense,
-  canAddExpense,
 }: {
   daysLeft: number;
   isCurrentPeriod: boolean;
-  pendingCount: number;
+  isManager: boolean;
+  hasTodayEntry: boolean;
+  canEditToday: boolean;
+  ownPendingCount: number;
+  pendingBazarCount: number;
+  joinRequestCount: number;
+  pendingListingCount: number;
   onAddExpense: () => void;
-  canAddExpense: boolean;
 }) {
   const { data } = useWorkspace();
   const periodHref = usePeriodHref();
+  const attentionCount = pendingBazarCount + joinRequestCount + pendingListingCount;
   const headline = !isCurrentPeriod
     ? `${periodLabel(data.period)} is closed.`
-    : pendingCount > 0
-      ? pendingCount === 1
-        ? "1 bazar entry needs a review."
-        : `${pendingCount} bazar entries need a review.`
-      : "Your mess is running smoothly.";
+    : isManager
+      ? attentionCount > 0
+        ? `${pluralize(attentionCount, "task")} ${attentionCount === 1 ? "needs" : "need"} your attention.`
+        : "Your mess is up to date."
+      : !hasTodayEntry
+        ? canEditToday
+          ? "Plan today’s meals in a few taps."
+          : "Today’s meal entry is closed."
+        : ownPendingCount > 0
+          ? `${pluralize(ownPendingCount, "bazar entry", "bazar entries")} waiting for approval.`
+          : "You’re all set for today.";
   const detail = !isCurrentPeriod
     ? "You are looking at a past month. Figures no longer change."
-    : `${pluralize(daysLeft, "day")} left in ${periodLabel(data.period)}.`;
+    : isManager && attentionCount > 0
+      ? `${managerAttentionSummary(pendingBazarCount, joinRequestCount, pendingListingCount)}. ${pluralize(daysLeft, "day")} left this month.`
+      : !isManager && !hasTodayEntry && canEditToday
+        ? `Meal entry closes at ${data.settings.cutoff}. ${pluralize(daysLeft, "day")} left this month.`
+        : !isManager && !hasTodayEntry
+          ? `The ${data.settings.cutoff} cutoff has passed. Ask a manager if today’s count needs correcting.`
+        : `${pluralize(daysLeft, "day")} left in ${periodLabel(data.period)}.`;
 
   return (
     <section className="welcome-strip">
       <div className="welcome-copy">
         <span className="eyebrow">
-          <Sparkles size={14} aria-hidden="true" /> {periodLabel(data.period).toUpperCase()}
+          <Sparkles size={14} aria-hidden="true" /> {isManager ? "MANAGER" : "MY OVERVIEW"} &middot; {periodLabel(data.period).toUpperCase()}
         </span>
         <h2>{headline}</h2>
         <p>{detail}</p>
       </div>
       <div className="strip-actions">
+        {isCurrentPeriod && !isManager && (
+          <Link className="button button-light" href={periodHref("/meals")}>
+            {hasTodayEntry ? "Update meals" : canEditToday ? "Plan my meals" : "View meal plan"}
+          </Link>
+        )}
         <Link className="button button-light" href={periodHref("/expenses")}>
-          View report
+          {isManager ? "View report" : "View my balance"}
         </Link>
-        {canAddExpense && (
+        {isCurrentPeriod && isManager && (
           <button className="button button-coral" onClick={onAddExpense}>
             <Plus size={17} aria-hidden="true" /> Add expense
           </button>
@@ -204,6 +304,101 @@ function PeriodStrip({
       </div>
     </section>
   );
+}
+
+function ManagerInbox({
+  pendingBazarCount,
+  pendingBazarTotal,
+  joinRequestCount,
+  pendingListingCount,
+}: {
+  pendingBazarCount: number;
+  pendingBazarTotal: number;
+  joinRequestCount: number;
+  pendingListingCount: number;
+}) {
+  const periodHref = usePeriodHref();
+  const total = pendingBazarCount + joinRequestCount + pendingListingCount;
+  const items = [
+    pendingBazarCount > 0
+      ? {
+          href: "/bazar",
+          label: "Bazar approvals",
+          value: pluralize(pendingBazarCount, "entry", "entries"),
+          detail: `${formatMoney(pendingBazarTotal)} is not in the meal rate yet`,
+          icon: ShoppingBasket,
+          tone: "coral",
+        }
+      : null,
+    joinRequestCount > 0
+      ? {
+          href: "/members",
+          label: "Join requests",
+          value: pluralize(joinRequestCount, "person", "people"),
+          detail: "Approve them and optionally assign a room",
+          icon: UserPlus,
+          tone: "blue",
+        }
+      : null,
+    pendingListingCount > 0
+      ? {
+          href: "/house/listings",
+          label: "Listing reviews",
+          value: pluralize(pendingListingCount, "post"),
+          detail: "Review before it becomes public",
+          icon: Megaphone,
+          tone: "sand",
+        }
+      : null,
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+
+  return (
+    <section className="panel manager-inbox" aria-labelledby="manager-inbox-title">
+      <div className="manager-inbox-heading">
+        <span className="manager-inbox-icon" aria-hidden="true">
+          <ClipboardCheck size={21} />
+        </span>
+        <div>
+          <span className="section-kicker">MANAGER INBOX</span>
+          <h3 id="manager-inbox-title">{pluralize(total, "item")} waiting for you</h3>
+          <p>Handle these first so member totals and public listings stay accurate.</p>
+        </div>
+      </div>
+      <div className="manager-inbox-list">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link key={item.href} href={periodHref(item.href)} className="manager-inbox-item">
+              <span className={`manager-inbox-item-icon ${item.tone}`} aria-hidden="true">
+                <Icon size={18} />
+              </span>
+              <span>
+                <small>{item.label}</small>
+                <strong>{item.value}</strong>
+                <em>{item.detail}</em>
+              </span>
+              <ChevronRight size={17} aria-hidden="true" />
+            </Link>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function managerAttentionSummary(bazar: number, members: number, listings: number) {
+  return [
+    bazar ? pluralize(bazar, "bazar approval") : "",
+    members ? pluralize(members, "join request") : "",
+    listings ? pluralize(listings, "listing review") : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function balanceLabel(balance: number) {
+  if (Math.abs(balance) < 1) return "You are fully settled";
+  return balance > 0 ? "The mess owes you" : "You owe the mess";
 }
 
 function SetupChecklist({ tasks }: { tasks: { done: boolean; label: string; href: string }[] }) {
@@ -318,7 +513,8 @@ function TodayMealsEditor({
   today: string;
   saved: MealEntry | undefined;
 }) {
-  const { data, runAction, busy } = useWorkspace();
+  const { data, runAction, busy, isManager } = useWorkspace();
+  const [mountedAt] = useState(() => Date.now());
   const enabled = MEAL_KEYS.filter((key) => data.settings.mealTypes[key]);
 
   const [draft, setDraft] = useState(() => ({
@@ -337,8 +533,13 @@ function TodayMealsEditor({
   const total = enabled.reduce((sum, key) => sum + draft[key], 0);
   const dirty = enabled.some((key) => draft[key] !== (saved?.[key] ?? 0));
   const notCurrentMonth = data.period !== periodInZone(data.settings.timezone);
+  const locked =
+    !isManager &&
+    !data.settings.allowAnytime &&
+    cutoffHasPassed(data.settings.timezone, data.settings.cutoff, new Date(mountedAt));
 
   const save = async () => {
+    if (locked) return;
     const result = await runAction("saveMeals", { date: today, meals: draft }, "Today’s meals saved.");
     if (result) setJustSaved(true);
   };
@@ -370,9 +571,13 @@ function TodayMealsEditor({
           </span>
           <h3>Today&rsquo;s meals</h3>
         </div>
-        <span className="entry-window">
+        <span className={`entry-window ${locked ? "closed" : ""}`}>
           <Clock3 size={14} aria-hidden="true" />{" "}
-          {data.settings.allowAnytime ? "Open all day" : `Closes at ${data.settings.cutoff}`}
+          {locked
+            ? "Closed for today"
+            : data.settings.allowAnytime || isManager
+              ? "Open all day"
+              : `Closes at ${data.settings.cutoff}`}
         </span>
       </div>
 
@@ -391,7 +596,7 @@ function TodayMealsEditor({
                 type="button"
                 onClick={() => setDraft({ ...draft, [key]: Math.max(0, draft[key] - 1) })}
                 aria-label={`One fewer ${MEAL_META[key].label.toLowerCase()}`}
-                disabled={draft[key] === 0}
+                disabled={locked || draft[key] === 0}
               >
                 <Minus size={15} aria-hidden="true" />
               </button>
@@ -400,6 +605,7 @@ function TodayMealsEditor({
                 type="button"
                 onClick={() => setDraft({ ...draft, [key]: Math.min(9, draft[key] + 1) })}
                 aria-label={`One more ${MEAL_META[key].label.toLowerCase()}`}
+                disabled={locked}
               >
                 <Plus size={15} aria-hidden="true" />
               </button>
@@ -412,7 +618,9 @@ function TodayMealsEditor({
         <div>
           <strong>{pluralize(total, "meal")}</strong>
           <span>
-            {data.settlement.mealRate > 0
+            {locked
+              ? "Ask a manager if today’s meal count needs correcting"
+              : data.settlement.mealRate > 0
               ? `About ${formatMoney(total * data.settlement.mealRate)} at the current rate`
               : "The rate appears once bazar is approved"}
           </span>
@@ -422,12 +630,14 @@ function TodayMealsEditor({
           busyLabel="Saving…"
           className={`button ${justSaved ? "button-success" : "button-dark"}`}
           onClick={save}
-          disabled={!dirty && !justSaved}
+          disabled={locked || (!dirty && !justSaved)}
         >
           {justSaved ? (
             <>
               <Check size={16} aria-hidden="true" /> Saved
             </>
+          ) : locked ? (
+            "Entry closed"
           ) : dirty ? (
             "Save today’s meals"
           ) : (
