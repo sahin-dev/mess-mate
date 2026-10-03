@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { propertySummary } from "@/lib/property";
 import { SectionHeading } from "@/components/ui";
-import { useWorkspace } from "@/components/workspace-context";
+import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
 const TABS = [
   { href: "/house", label: "Building & flat" },
@@ -19,6 +19,7 @@ const TABS = [
  */
 export function HouseShell({ children }: { children: React.ReactNode }) {
   const { data } = useWorkspace();
+  const periodHref = usePeriodHref();
   const pathname = usePathname();
   const summary = propertySummary(data.property);
 
@@ -37,7 +38,7 @@ export function HouseShell({ children }: { children: React.ReactNode }) {
         {TABS.map((tab) => (
           <Link
             key={tab.href}
-            href={tab.href}
+            href={periodHref(tab.href)}
             aria-current={pathname === tab.href ? "page" : undefined}
             className={pathname === tab.href ? "active" : ""}
           >

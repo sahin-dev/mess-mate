@@ -16,7 +16,7 @@ import { periodInZone } from "@/lib/timezone";
 import type { WorkspaceData } from "@/lib/types";
 import type { ConfirmRequest } from "@/components/ui";
 
-export type Panel = "notifications" | "help" | null;
+export type Panel = "notifications" | "help" | "quick" | "addExpense" | "addBazar" | null;
 export type Toast = { id: number; message: string; tone: "success" | "error" };
 
 type WorkspaceContextValue = {
@@ -43,6 +43,31 @@ export function useWorkspace() {
   const context = useContext(WorkspaceContext);
   if (!context) throw new Error("useWorkspace must be used inside the workspace shell.");
   return context;
+}
+
+/**
+ * Keeps the selected settlement month attached to links inside the workspace.
+ * Without this, moving from (for example) a closed dashboard to Expenses
+ * silently jumps back to the current month.
+ */
+export function usePeriodHref() {
+  const { data } = useWorkspace();
+
+  return useCallback(
+    (href: string) => {
+      if (!href.startsWith("/") || href.startsWith("//")) return href;
+      if (data.period === periodInZone(data.settings.timezone)) return href;
+
+      const hashIndex = href.indexOf("#");
+      const hash = hashIndex >= 0 ? href.slice(hashIndex) : "";
+      const withoutHash = hashIndex >= 0 ? href.slice(0, hashIndex) : href;
+      const [pathname, query = ""] = withoutHash.split("?");
+      const params = new URLSearchParams(query);
+      params.set("month", data.period);
+      return `${pathname}?${params.toString()}${hash}`;
+    },
+    [data.period, data.settings.timezone],
+  );
 }
 
 export async function requestJson<T>(url: string, body?: Record<string, unknown>): Promise<T> {

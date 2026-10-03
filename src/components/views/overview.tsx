@@ -23,7 +23,7 @@ import { daysLeftInPeriod, periodLabel } from "@/lib/period";
 import { periodInZone, todayInZone } from "@/lib/timezone";
 import type { MealEntry, MealKey } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState } from "@/components/ui";
-import { useWorkspace } from "@/components/workspace-context";
+import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
 const MEAL_KEYS: MealKey[] = ["breakfast", "lunch", "dinner"];
 const MEAL_META: Record<MealKey, { label: string; symbol: string }> = {
@@ -34,6 +34,7 @@ const MEAL_META: Record<MealKey, { label: string; symbol: string }> = {
 
 export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
   const { data, isManager } = useWorkspace();
+  const periodHref = usePeriodHref();
   const { settlement, workspace } = data;
 
   const activeMembers = data.members.filter((member) => member.status === "active");
@@ -46,7 +47,7 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
   // A brand-new mess has nothing to show, so send the manager through setup
   // instead of a dashboard full of zeros.
   const setupTasks = [
-    { done: data.rooms.length > 0, label: "Add your rooms and rent", href: "/rooms" },
+    { done: data.rooms.length > 0, label: "Add your rooms and rent", href: "/house/rooms" },
     { done: activeMembers.length > 1, label: "Invite your housemates", href: "/members" },
     { done: data.bazar.length > 0, label: "Record the first bazar run", href: "/bazar" },
     { done: data.expenses.length > 0, label: "Add a shared bill", href: "/expenses" },
@@ -142,7 +143,7 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
                 <dd>{formatMoney(me?.expenseShare ?? 0)}</dd>
               </div>
             </dl>
-            <Link className="settlement-action" href="/expenses">
+            <Link className="settlement-action" href={periodHref("/expenses")}>
               See the full breakdown <ArrowUpRight size={16} aria-hidden="true" />
             </Link>
           </section>
@@ -170,6 +171,7 @@ function PeriodStrip({
   canAddExpense: boolean;
 }) {
   const { data } = useWorkspace();
+  const periodHref = usePeriodHref();
   const headline = !isCurrentPeriod
     ? `${periodLabel(data.period)} is closed.`
     : pendingCount > 0
@@ -191,7 +193,7 @@ function PeriodStrip({
         <p>{detail}</p>
       </div>
       <div className="strip-actions">
-        <Link className="button button-light" href="/expenses">
+        <Link className="button button-light" href={periodHref("/expenses")}>
           View report
         </Link>
         {canAddExpense && (
@@ -205,6 +207,7 @@ function PeriodStrip({
 }
 
 function SetupChecklist({ tasks }: { tasks: { done: boolean; label: string; href: string }[] }) {
+  const periodHref = usePeriodHref();
   const remaining = tasks.filter((task) => !task.done);
   return (
     <section className="setup-card">
@@ -224,7 +227,7 @@ function SetupChecklist({ tasks }: { tasks: { done: boolean; label: string; href
             {task.done ? (
               <span>{task.label}</span>
             ) : (
-              <Link href={task.href}>{task.label}</Link>
+              <Link href={periodHref(task.href)}>{task.label}</Link>
             )}
           </li>
         ))}
@@ -250,6 +253,7 @@ function MetricCard({
   delta?: { direction: "up" | "down"; text: string };
   href?: string;
 }) {
+  const periodHref = usePeriodHref();
   const body = (
     <>
       <div className={`metric-icon ${tone}`} aria-hidden="true">
@@ -273,7 +277,7 @@ function MetricCard({
     </>
   );
   return href ? (
-    <Link className="metric-card metric-link" href={href}>
+    <Link className="metric-card metric-link" href={periodHref(href)}>
       {body}
     </Link>
   ) : (
@@ -437,6 +441,7 @@ function TodayMealsEditor({
 
 function RateTrend() {
   const { data } = useWorkspace();
+  const periodHref = usePeriodHref();
   const points = data.trend;
   const max = Math.max(...points.map((point) => point.mealRate), 1);
   const withData = points.filter((point) => point.mealRate > 0);
@@ -449,7 +454,7 @@ function RateTrend() {
           <span className="section-kicker">MEAL RATE HISTORY</span>
           <h3>Cost per meal</h3>
         </div>
-        <Link className="text-button" href="/meals">
+        <Link className="text-button" href={periodHref("/meals")}>
           Meal planner <ChevronRight size={15} aria-hidden="true" />
         </Link>
       </div>
@@ -539,6 +544,7 @@ function SettleUp() {
 
 function NextDuty() {
   const { data } = useWorkspace();
+  const periodHref = usePeriodHref();
   const mine = data.roster.find((slot) => slot.memberId === data.workspace.userId);
   const next = data.roster[0];
 
@@ -566,7 +572,7 @@ function NextDuty() {
         <p>{isMine ? "You are on bazar duty" : `${slot.name} is on bazar duty`}</p>
         <Avatar name={slot.name} color={slot.color} size="sm" avatarId={slot.avatarId} />
       </div>
-      <Link className="subtle-button" href="/bazar">
+      <Link className="subtle-button" href={periodHref("/bazar")}>
         See the full roster <ChevronRight size={15} aria-hidden="true" />
       </Link>
     </section>

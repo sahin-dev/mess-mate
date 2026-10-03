@@ -4,6 +4,8 @@ import {
   Bell,
   CalendarDays,
   Check,
+  ChevronRight,
+  Command,
   Compass,
   CookingPot,
   Gauge,
@@ -11,13 +13,16 @@ import {
   LogOut,
   Menu,
   MoreHorizontal,
+  Plus,
   ReceiptText,
+  Search,
   Settings,
   ShieldAlert,
   ShoppingBasket,
   Sparkles,
   Users,
   Utensils,
+  WalletCards,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -25,6 +30,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { formatDate, initialsOf, relativeTime } from "@/lib/format";
 import { PresencePing } from "@/components/presence-ping";
+import { AddBazarModal, AddExpenseModal } from "@/components/entry-modals";
 import { periodLabel } from "@/lib/period";
 import type { WorkspaceData } from "@/lib/types";
 import {
@@ -36,6 +42,7 @@ import {
 } from "@/components/ui";
 import {
   requestJson,
+  usePeriodHref,
   useWorkspace,
   WorkspaceProvider,
   type Panel,
@@ -84,9 +91,10 @@ export function WorkspaceShell({
 }
 
 function ShellChrome({ children }: { children: ReactNode }) {
-  const { data, isManager, openPanel } = useWorkspace();
+  const { data, isManager, openPanel, panel } = useWorkspace();
   const pathname = usePathname();
   const router = useRouter();
+  const periodHref = usePeriodHref();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { workspace } = data;
   // Navigation closes the drawer at the click, rather than reacting to the
@@ -101,6 +109,17 @@ function ShellChrome({ children }: { children: ReactNode }) {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [drawerOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openPanel(panel === "quick" ? null : "quick");
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [openPanel, panel]);
 
   const signOut = async () => {
     try {
@@ -170,7 +189,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
               return (
                 <li key={href}>
                   <Link
-                    href={href}
+                    href={periodHref(href)}
                     className={active ? "active" : ""}
                     aria-current={active ? "page" : undefined}
                     onClick={closeDrawer}
@@ -193,7 +212,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
               <ul aria-labelledby="nav-management">
                 <li>
                   <Link
-                    href="/settings"
+                    href={periodHref("/settings")}
                     className={pathname === "/settings" ? "active" : ""}
                     aria-current={pathname === "/settings" ? "page" : undefined}
                     onClick={closeDrawer}
@@ -208,6 +227,22 @@ function ShellChrome({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-bottom">
+          <button
+            type="button"
+            className="sidebar-quick"
+            onClick={() => {
+              closeDrawer();
+              openPanel("quick");
+            }}
+          >
+            <span aria-hidden="true">
+              <Plus size={17} />
+            </span>
+            <span>
+              <strong>Quick add</strong>
+              <small>Meals, bazar, bills and more</small>
+            </span>
+          </button>
           <Link className="sidebar-external" href="/community">
             <Compass size={17} aria-hidden="true" />
             <span>
@@ -226,7 +261,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
             </button>
           </div>
           <div className="profile-row">
-            <Link className="profile-identity" href="/profile" onClick={closeDrawer}>
+            <Link className="profile-identity" href={periodHref("/profile")} onClick={closeDrawer}>
               <Avatar
                 name={workspace.userName}
                 color="#c9603f"
@@ -260,7 +295,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
             return (
               <Link
                 key={href}
-                href={href}
+                href={periodHref(href)}
                 className={active ? "active" : ""}
                 aria-current={active ? "page" : undefined}
                 onClick={closeDrawer}
@@ -281,8 +316,41 @@ function ShellChrome({ children }: { children: ReactNode }) {
 }
 
 function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
-  const { data, openPanel, setPeriod, switchingPeriod } = useWorkspace();
+  const { data, openPanel, panel, setPeriod, switchingPeriod } = useWorkspace();
   const pathname = usePathname();
+  const periodHref = usePeriodHref();
+  const latestActivity = data.activity[0]?.createdAt ?? "";
+  const activityKey = `messmate:activity-seen:${data.workspace.messId}:${data.workspace.userId}`;
+  const [lastSeenActivity, setLastSeenActivity] = useState<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        setLastSeenActivity(window.localStorage.getItem(activityKey));
+      } catch {
+        setLastSeenActivity(null);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activityKey]);
+
+  useEffect(() => {
+    if (panel !== "notifications" || !latestActivity) return;
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        window.localStorage.setItem(activityKey, latestActivity);
+      } catch {
+        // Private browsing can disable storage; the in-memory state still works.
+      }
+      setLastSeenActivity(latestActivity);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activityKey, latestActivity, panel]);
+
+  const hasUnreadActivity =
+    lastSeenActivity !== undefined && Boolean(latestActivity) && latestActivity > (lastSeenActivity ?? "");
+
+  const showActivity = () => openPanel("notifications");
   // Sub-routes such as /house/rooms belong to their section's heading, so the
   // longest matching prefix wins rather than an exact match.
   const meta =
@@ -292,7 +360,7 @@ function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
         .filter((key) => pathname.startsWith(`${key}/`))
         .sort((a, b) => b.length - a.length)[0]
     ];
-  const title = meta?.title ?? `${greetingFor(data.workspace.userName)}`;
+  const title = meta?.title ?? `${greetingFor(data.workspace.userName, data.settings.timezone)}`;
   const subtitle = meta?.subtitle ?? `Here is what is happening at ${data.workspace.messName}.`;
 
   return (
@@ -307,6 +375,16 @@ function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
         </div>
       </div>
       <div className="top-actions">
+        <button
+          type="button"
+          className="button button-dark quick-add-button"
+          aria-keyshortcuts="Control+K Meta+K"
+          onClick={() => openPanel("quick")}
+        >
+          <Plus size={17} aria-hidden="true" />
+          <span className="quick-add-label">Quick add</span>
+          <kbd aria-hidden="true">Ctrl K</kbd>
+        </button>
         <label className="month-picker">
           <CalendarDays size={17} aria-hidden="true" />
           <span className="visually-hidden">Settlement month</span>
@@ -324,13 +402,13 @@ function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
         </label>
         <button
           className="icon-button notification"
-          onClick={() => openPanel("notifications")}
-          aria-label={`Notifications, ${data.activity.length} recent`}
+          onClick={showActivity}
+          aria-label={hasUnreadActivity ? "Notifications, unread activity" : "Notifications"}
         >
           <Bell size={19} aria-hidden="true" />
-          {data.activity.length > 0 && <i aria-hidden="true" />}
+          {hasUnreadActivity && <i aria-hidden="true" />}
         </button>
-        <Link href="/profile" className="topbar-identity" aria-label="Your profile">
+        <Link href={periodHref("/profile")} className="topbar-identity" aria-label="Your profile">
           <Avatar
             name={data.workspace.userName}
             color="#c9603f"
@@ -342,10 +420,153 @@ function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
   );
 }
 
-function greetingFor(name: string) {
-  const hour = new Date().getHours();
+function greetingFor(name: string, timeZone: string) {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hourCycle: "h23",
+      timeZone,
+    }).format(new Date()),
+  );
   const part = hour < 5 ? "Still up" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   return `${part}, ${name.split(" ")[0]}`;
+}
+
+function QuickActions({ onClose }: { onClose: () => void }) {
+  const { isManager, openPanel } = useWorkspace();
+  const periodHref = usePeriodHref();
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+
+  const actions: Array<{
+    label: string;
+    description: string;
+    keywords: string;
+    icon: typeof Gauge;
+    href?: string;
+    panel?: Panel;
+    managerOnly?: boolean;
+  }> = [
+    {
+      label: "Record today’s meals",
+      description: "Set breakfast, lunch and dinner counts.",
+      keywords: "food count breakfast lunch dinner",
+      icon: Utensils,
+      href: "/meals",
+    },
+    {
+      label: "Add a bazar run",
+      description: "Record groceries, the buyer and a receipt.",
+      keywords: "grocery shopping receipt purchase",
+      icon: ShoppingBasket,
+      panel: "addBazar",
+    },
+    {
+      label: "Add a shared expense",
+      description: "Record rent, utilities or another bill.",
+      keywords: "bill rent utility cost",
+      icon: ReceiptText,
+      panel: "addExpense",
+      managerOnly: true,
+    },
+    {
+      label: "Review settlement",
+      description: "See balances and who should pay whom.",
+      keywords: "balance report settle payment",
+      icon: WalletCards,
+      href: "/expenses",
+    },
+    {
+      label: "Manage members",
+      description: "Invite housemates or review join requests.",
+      keywords: "invite join people housemates",
+      icon: Users,
+      href: "/members",
+    },
+    {
+      label: "Update house details",
+      description: "Edit rooms, facilities and listings.",
+      keywords: "room rent facilities address listing",
+      icon: Home,
+      href: "/house",
+    },
+    {
+      label: "Mess settings",
+      description: "Change meal rules, approvals and reminders.",
+      keywords: "configuration cutoff notification rules",
+      icon: Settings,
+      href: "/settings",
+      managerOnly: true,
+    },
+  ];
+
+  const search = query.trim().toLowerCase();
+  const visibleActions = actions.filter(
+    (action) =>
+      (!action.managerOnly || isManager) &&
+      (!search || `${action.label} ${action.description} ${action.keywords}`.toLowerCase().includes(search)),
+  );
+
+  const choose = (action: (typeof actions)[number]) => {
+    if (action.panel) {
+      openPanel(action.panel);
+      return;
+    }
+    if (action.href) {
+      onClose();
+      router.push(periodHref(action.href));
+    }
+  };
+
+  return (
+    <Modal
+      title="What would you like to do?"
+      subtitle="Jump to a section or start a common task."
+      onClose={onClose}
+    >
+      <label className="quick-search">
+        <Search size={18} aria-hidden="true" />
+        <span className="visually-hidden">Search actions</span>
+        <input
+          autoFocus
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search actions…"
+        />
+      </label>
+      {visibleActions.length > 0 ? (
+        <ul className="quick-action-list">
+          {visibleActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <li key={action.label}>
+                <button type="button" onClick={() => choose(action)}>
+                  <span className="quick-action-icon" aria-hidden="true">
+                    <Icon size={19} />
+                  </span>
+                  <span>
+                    <strong>{action.label}</strong>
+                    <small>{action.description}</small>
+                  </span>
+                  <ChevronRight size={17} aria-hidden="true" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <EmptyState
+          icon={<Search size={22} aria-hidden="true" />}
+          title="No matching action"
+          message="Try meals, bazar, expense, members or house."
+        />
+      )}
+      <p className="quick-action-hint">
+        <Command size={14} aria-hidden="true" /> Press Ctrl/⌘ + K from anywhere to open this menu.
+      </p>
+    </Modal>
+  );
 }
 
 function Overlays({
@@ -364,8 +585,12 @@ function Overlays({
   dismissToast: (id: number) => void;
 }) {
   const { data } = useWorkspace();
+  const periodHref = usePeriodHref();
   return (
     <>
+      {panel === "quick" && <QuickActions onClose={() => openPanel(null)} />}
+      {panel === "addExpense" && <AddExpenseModal onClose={() => openPanel(null)} />}
+      {panel === "addBazar" && <AddBazarModal onClose={() => openPanel(null)} />}
       {panel === "notifications" && (
         <Modal
           title="Recent activity"
@@ -440,7 +665,7 @@ function Overlays({
             </li>
           </ol>
           <p className="help-footer">
-            <Link href="/settings">Mess settings</Link> controls cutoffs, approvals and the roster.
+            <Link href={periodHref("/settings")}>Mess settings</Link> controls cutoffs, approvals and the roster.
           </p>
         </Modal>
       )}

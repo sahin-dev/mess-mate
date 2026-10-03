@@ -42,10 +42,38 @@ export function mailFrom() {
   return process.env.MESSMATE_MAIL_FROM?.trim() || "MessMate <onboarding@resend.dev>";
 }
 
+const LOCAL_APP_URL = "http://localhost:3000";
+
 /** Absolute base URL for links inside emails. */
 export function appUrl(path = "/") {
-  const base = (process.env.MESSMATE_APP_URL?.trim() || "http://localhost:3000").replace(/\/+$/, "");
+  const base = (process.env.MESSMATE_APP_URL?.trim() || LOCAL_APP_URL).replace(/\/+$/, "");
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/** True when every link in every email is going to point at the dev machine. */
+export function appUrlIsLocal() {
+  return !process.env.MESSMATE_APP_URL?.trim();
+}
+
+let warnedAboutAppUrl = false;
+
+/**
+ * The one combination that silently ruins email: a real transport, sending real
+ * messages to real people, with every link inside them pointing at localhost.
+ *
+ * Nothing fails, nothing is logged by the transport, and the first anyone knows
+ * is a recipient saying the button does not work — so say it here instead, once
+ * per process so a busy server does not repeat it on every send.
+ */
+function warnIfLinksAreLocal(transport: MailTransport) {
+  if (warnedAboutAppUrl) return;
+  if (transport !== "resend" && transport !== "smtp") return;
+  if (!appUrlIsLocal()) return;
+  warnedAboutAppUrl = true;
+  console.warn(
+    `[messmate] MESSMATE_APP_URL is not set, so every link in outgoing email points at ${LOCAL_APP_URL}. ` +
+      "Invitations and password resets will not work for anyone but you. Set it to the address people actually use.",
+  );
 }
 
 /** True when mail actually leaves the server, so the UI can tell the truth. */
@@ -56,6 +84,7 @@ export function mailIsDelivered() {
 
 export async function sendMail(message: MailMessage): Promise<MailResult> {
   const transport = mailTransport();
+  warnIfLinksAreLocal(transport);
   try {
     switch (transport) {
       case "disabled":
