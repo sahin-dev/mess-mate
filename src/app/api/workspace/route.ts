@@ -24,7 +24,7 @@ import { mergeVisibility } from "@/lib/visibility";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendMail } from "@/lib/mail";
 import { isPeriod, type Period } from "@/lib/period";
-import { allocateExpenseShares } from "@/lib/settlement";
+import { allocateExpenseShares, memberActiveOn } from "@/lib/settlement";
 import {
   cutoffHasPassed,
   DEFAULT_TIMEZONE,
@@ -84,7 +84,10 @@ const MAX_PROOF_CHARS = 3_500_000;
 
 function dateString(value: unknown, field = "Date") {
   const date = cleanString(value, field, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? new Date(`${date}T00:00:00.000Z`)
+    : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
     throw new ApiError(400, `${field} is invalid.`);
   }
   return date;
@@ -317,7 +320,13 @@ export async function POST(request: Request) {
         color: MEMBER_COLORS[0],
       };
       await db.collection<MessDocument>("messes").insertOne(mess);
-      await db.collection<MemberDocument>("members").insertOne(member);
+      try {
+        await db.collection<MemberDocument>("members").insertOne(member);
+      } catch (error) {
+        // Do not leave an ownerless mess if the membership insert fails.
+        await db.collection<MessDocument>("messes").deleteOne({ id: messId });
+        throw error;
+      }
       await setActiveWorkspace(db, session, messId, "manager");
       await addActivity(db, messId, "Mess created", `${user.name} created ${name}`, "green");
       return Response.json(await getWorkspaceData(db, user, messId, "manager", period), {
@@ -369,17 +378,23 @@ export async function POST(request: Request) {
       // An invitation is the manager having already said yes, so it converts
       // straight into membership rather than asking them again.
       if (existing?.status === "invited") {
-        const { _id: _placeholder, ...invited } = existing;
-        await db.collection<MemberDocument>("members").deleteOne({ id: existing.id, messId: mess.id });
-        await db.collection<MemberDocument>("members").insertOne({
-          ...invited,
-          id: user.id,
-          userId: user.id,
-          name: user.name,
-          status: "active",
-          joinedAt: todayInZone(DEFAULT_TIMEZONE),
-          membershipPeriods: [{ from: todayInZone(DEFAULT_TIMEZONE), to: null }],
-        });
+        const joinedAt = todayInZone(
+          ((mess.settings as Partial<MessSettings> | undefined)?.timezone) ?? DEFAULT_TIMEZONE,
+        );
+        await db.collection<MemberDocument>("members").updateOne(
+          { id: existing.id, messId: mess.id, status: "invited" },
+          {
+            $set: {
+              id: user.id,
+              userId: user.id,
+              name: user.name,
+              email: user.email,
+              status: "active",
+              joinedAt,
+              membershipPeriods: [{ from: joinedAt, to: null }],
+            },
+          },
+        );
         const role: UserRole = existing.role === "Manager" ? "manager" : "member";
         await setActiveWorkspace(db, session, mess.id, role);
         await addActivity(db, mess.id, "Member joined", `${user.name} accepted their invitation`, "green");
@@ -540,7 +555,7 @@ export async function POST(request: Request) {
     } else if (action === "markSettlementPaid" || action === "markSettlementUnpaid") {
       const fromId = cleanString(body.fromId, "Payer", 100);
       const toId = cleanString(body.toId, "Recipient", 100);
-      const amount = Math.round(cleanNumber(body.amount, "Payment amount", 1));
+      const amount = Math.round(cleanNumber(body.amount, "Payment amount", 0.01) * 100) / 100;
       const snapshot = await getWorkspaceData(db, user, messId, role, period);
       const transfer = snapshot.settlement.transfers.find(
         (entry) => entry.fromId === fromId && entry.toId === toId && entry.amount === amount,
@@ -736,8 +751,10 @@ export async function POST(request: Request) {
       // The payer has to be someone in this mess, or the balances will not add up.
       const payer = await db
         .collection<MemberDocument>("members")
-        .findOne({ id: expense.createdBy, messId, status: "active" });
-      if (!payer) throw new ApiError(400, "Choose an active member who paid for this expense.");
+        .findOne({ id: expense.createdBy, messId });
+      if (!payer || !memberActiveOn(payer, expense.date)) {
+        throw new ApiError(400, "Choose a member who belonged to the mess on the expense date.");
+      }
       const [members, rooms] = await Promise.all([
         db.collection<MemberDocument>("members").find({ messId }).toArray(),
         db.collection<RoomDocument>("rooms").find({ messId }).toArray(),
@@ -1173,6 +1190,14 @@ export async function POST(request: Request) {
       const roomId = cleanString(body.roomId, "Room", 100);
       const room = await db.collection<RoomDocument>("rooms").findOne({ id: roomId, messId });
       if (!room) throw new ApiError(404, "That room no longer exists.");
+      if (!isManager) {
+        const membership = await db
+          .collection<MemberDocument>("members")
+          .findOne({ messId, userId: user.id, status: "active" });
+        if (!membership || membership.roomId !== roomId) {
+          throw new ApiError(403, "Members can only advertise the room they live in.");
+        }
+      }
 
       const seats = Math.round(cleanNumber(body.seats, "Seats", 1, 20));
       if (seats > room.capacity) {
@@ -1197,6 +1222,8 @@ export async function POST(request: Request) {
       const status = !isManager && requested === "published" ? "pending" : requested;
 
       const preferences = mergePreferences(body.preferences as Partial<TenantPreferences>);
+      const contactEmail = optionalText(body.contactEmail, 180);
+      if (contactEmail) cleanEmail(contactEmail);
       const now = new Date().toISOString();
       const listing: ListingDocument = {
         id: existing?.id ?? newId("listing"),
@@ -1243,7 +1270,7 @@ export async function POST(request: Request) {
         // account, because publishing makes them public.
         contactName: optionalText(body.contactName, 80) || user.name,
         contactPhone: optionalText(body.contactPhone, 40),
-        contactEmail: optionalText(body.contactEmail, 180),
+        contactEmail: contactEmail ? cleanEmail(contactEmail) : "",
         publishedAt: status === "published" ? (existing?.publishedAt ?? now) : (existing?.publishedAt ?? null),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
@@ -1355,7 +1382,12 @@ export async function POST(request: Request) {
       if (role !== "manager" && role !== "admin" && listing.authorId !== user.id) {
         throw new ApiError(403, "Only the person who wrote this post, or a manager, can edit it.");
       }
-      await db.collection<ListingPhotoDocument>("listingPhotos").deleteOne({ id: photoId, messId });
+      const removed = await db
+        .collection<ListingPhotoDocument>("listingPhotos")
+        .deleteOne({ id: photoId, listingId: listing.id, messId });
+      if (!removed.deletedCount) {
+        throw new ApiError(404, "That photo is no longer attached to this post.");
+      }
       await db
         .collection<ListingDocument>("listings")
         .updateOne(

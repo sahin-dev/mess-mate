@@ -1,3 +1,5 @@
+import "server-only";
+
 import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { cookies, headers } from "next/headers";
@@ -219,6 +221,32 @@ export async function readSession() {
   if (!session) return null;
   const user = await db.collection<UserDocument>("users").findOne({ id: session.userId });
   if (!user) return null;
+  // A session stores the last selected workspace for navigation, not an
+  // authorization grant. Re-check the live membership on every authenticated
+  // request so a removed or demoted account cannot keep stale access.
+  if (session.activeMessId && !user.isAdmin) {
+    const membership = await db
+      .collection<{ role: "Manager" | "Member" }>("members")
+      .findOne(
+        { messId: session.activeMessId, userId: user.id, status: "active" },
+        { projection: { role: 1 } },
+      );
+    if (!membership) {
+      await db
+        .collection<SessionDocument>("sessions")
+        .updateOne({ token: session.token }, { $set: { activeMessId: null, role: null } });
+      session.activeMessId = null;
+      session.role = null;
+    } else {
+      const actualRole: UserRole = membership.role === "Manager" ? "manager" : "member";
+      if (session.role !== actualRole) {
+        await db
+          .collection<SessionDocument>("sessions")
+          .updateOne({ token: session.token }, { $set: { role: actualRole } });
+        session.role = actualRole;
+      }
+    }
+  }
   await touchLastSeen(db, user);
   return { db, session, user };
 }
@@ -334,7 +362,7 @@ export async function adoptMembership(
 /** The mess this user has asked to join, if a manager has yet to decide. */
 export async function pendingJoinRequest(db: Db, user: UserDocument) {
   const request = await db
-    .collection<{ messId: string; joinedAt: string }>("members")
+    .collection<{ messId: string; joinedAt: string; requestedAt?: string }>("members")
     .findOne({ userId: user.id, status: "requested" });
   if (!request) return null;
   const mess = await db.collection<MessDocument>("messes").findOne({ id: request.messId });
@@ -343,7 +371,7 @@ export async function pendingJoinRequest(db: Db, user: UserDocument) {
     messId: mess.id,
     messName: mess.name,
     location: mess.location,
-    requestedAt: request.joinedAt,
+    requestedAt: request.requestedAt ?? request.joinedAt,
   };
 }
 

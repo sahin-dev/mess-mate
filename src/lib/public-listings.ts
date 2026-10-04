@@ -1,3 +1,5 @@
+import "server-only";
+
 import type { Db } from "mongodb";
 import type {
   BazarDocument,
@@ -376,13 +378,13 @@ async function summariseCosts(
     const memberCount = Math.max(1, settlement.members.length);
     const averageMeals = Math.round(settlement.totalMeals / memberCount);
     const foodPerMonth = Math.round(averageMeals * settlement.mealRate);
-    // Rent recorded as a shared bill is already covered by the room rent above,
-    // so only non-rent bills are added here.
-    const billsPerMonth = Math.round(
-      settlement.byCategory
-        .filter((slice) => slice.label !== "Bazar" && slice.label !== "Fixed")
-        .reduce((sum, slice) => sum + slice.amount, 0) / memberCount,
-    );
+    // Room rent is already quoted above, but other fixed costs (Wi-Fi,
+    // cleaner, gas) are real monthly bills and must not disappear merely
+    // because they share the "Fixed" category with rent.
+    const sharedBills = expenses
+      .filter((expense) => !/\b(?:house\s+)?rent\b/i.test(expense.title))
+      .reduce((sum, expense) => sum + expense.amount, 0);
+    const billsPerMonth = Math.round(sharedBills / memberCount);
 
     return {
       period,

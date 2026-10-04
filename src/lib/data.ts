@@ -1,3 +1,5 @@
+import "server-only";
+
 import type { Db } from "mongodb";
 import { periodShortLabel, shiftPeriod, type Period } from "@/lib/period";
 import { DEFAULT_TIMEZONE, normalizeTimezone, periodInZone, todayInZone } from "@/lib/timezone";
@@ -171,6 +173,7 @@ export async function ensureIndexes(db: Db) {
     db.collection("messes").createIndex({ joinCode: 1 }, { unique: true }),
     db.collection("messes").createIndex({ id: 1 }, { unique: true }),
     db.collection("members").createIndex({ messId: 1, email: 1 }, { unique: true }),
+    db.collection("members").createIndex({ messId: 1, id: 1 }, { unique: true }),
     db.collection("members").createIndex({ userId: 1, status: 1 }),
     db.collection("meals").createIndex({ messId: 1, userId: 1, date: 1 }, { unique: true }),
     db.collection("meals").createIndex({ messId: 1, date: 1 }),

@@ -40,3 +40,4 @@ async function connectMongo() {
     return new MongoClient(uri, options).connect();
   }
 }
+import "server-only";

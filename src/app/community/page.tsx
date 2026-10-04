@@ -51,7 +51,7 @@ export default async function CommunityPage({
         <h1>Rooms in shared homes</h1>
         <p>
           Every listing shows what living there actually costs &mdash; rent, food and bills &mdash;
-          worked out from the house&rsquo;s own records, not an estimate.
+          estimated from the house&rsquo;s own completed-month records rather than a generic average.
         </p>
       </section>
 

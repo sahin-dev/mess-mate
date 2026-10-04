@@ -263,7 +263,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                         <span>{transfer.from}</span>
                         <ArrowRight size={13} aria-hidden="true" />
                         <span>{transfer.to}</span>
-                        <b>{formatMoney(transfer.amount)}</b>
+                        <b>{formatMoney(transfer.amount, { decimals: !Number.isInteger(transfer.amount) })}</b>
                         {canUpdate ? (
                           <ActionButton
                             busy={busy}

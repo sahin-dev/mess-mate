@@ -214,11 +214,11 @@ export function computeSettlement(input: SettlementInput): Settlement {
  */
 function settleUp(members: MemberSettlement[], names: Map<string, string>) {
   const debtors = members
-    .filter((member) => member.balance < -0.5)
+    .filter((member) => member.balance < -0.005)
     .map((member) => ({ id: member.memberId, amount: -member.balance }))
     .sort((a, b) => b.amount - a.amount);
   const creditors = members
-    .filter((member) => member.balance > 0.5)
+    .filter((member) => member.balance > 0.005)
     .map((member) => ({ id: member.memberId, amount: member.balance }))
     .sort((a, b) => b.amount - a.amount);
 
@@ -229,19 +229,19 @@ function settleUp(members: MemberSettlement[], names: Map<string, string>) {
     const debtor = debtors[debtorIndex];
     const creditor = creditors[creditorIndex];
     const amount = Math.min(debtor.amount, creditor.amount);
-    if (amount > 0.5) {
+    if (amount > 0.005) {
       transfers.push({
         fromId: debtor.id,
         from: names.get(debtor.id) ?? "Member",
         toId: creditor.id,
         to: names.get(creditor.id) ?? "Member",
-        amount: Math.round(amount),
+        amount: round2(amount),
       });
     }
     debtor.amount -= amount;
     creditor.amount -= amount;
-    if (debtor.amount <= 0.5) debtorIndex += 1;
-    if (creditor.amount <= 0.5) creditorIndex += 1;
+    if (debtor.amount <= 0.005) debtorIndex += 1;
+    if (creditor.amount <= 0.005) creditorIndex += 1;
   }
   return transfers;
 }

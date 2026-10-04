@@ -51,3 +51,4 @@ export async function sendSmtp(message: MailMessage) {
 export async function verifySmtp() {
   await getTransporter().verify();
 }
+import "server-only";

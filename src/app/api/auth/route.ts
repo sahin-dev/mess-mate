@@ -6,7 +6,6 @@ import { sendMail } from "@/lib/mail";
 import {
   consumeResetToken,
   createResetToken,
-  markResetTokenUsed,
   RESET_TTL_MINUTES,
 } from "@/lib/password-reset";
 import { getDb } from "@/lib/mongodb";
@@ -105,9 +104,6 @@ export async function POST(request: Request) {
       const email = cleanEmail(body.email);
       const password = cleanString(body.password, "Password", 200);
       if (password.length < 8) throw new ApiError(400, "Use a password of at least 8 characters.");
-      if (await db.collection<UserDocument>("users").findOne({ email })) {
-        throw new ApiError(409, "An account with this email already exists. Try signing in.");
-      }
       const credentials = await hashPassword(password);
       const user: UserDocument = {
         id: newId("user"),
@@ -118,7 +114,14 @@ export async function POST(request: Request) {
         isAdmin: false,
         createdAt: new Date().toISOString(),
       };
-      await db.collection<UserDocument>("users").insertOne(user);
+      const created = await db.collection<UserDocument>("users").updateOne(
+        { email },
+        { $setOnInsert: user },
+        { upsert: true },
+      );
+      if (!created.upsertedCount) {
+        throw new ApiError(409, "An account with this email already exists. Try signing in.");
+      }
       await clearSession();
       await createSession(user.id, null, null);
       resetRateLimit(throttleKey);
@@ -211,7 +214,6 @@ export async function POST(request: Request) {
           { id: record.user.id },
           { $set: { passwordHash: credentials.hash, passwordSalt: credentials.salt } },
         );
-      await markResetTokenUsed(db, record.tokenHash);
       // Resetting a password ends every other session, which is the point of
       // resetting it when an account may be compromised.
       await db.collection("sessions").deleteMany({ userId: record.user.id });

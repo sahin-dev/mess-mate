@@ -1,5 +1,5 @@
 import { clientKey, rateLimit } from "@/lib/rate-limit";
-import { ApiError, jsonError, requireWorkspace } from "@/lib/server-utils";
+import { ApiError, jsonError, requireManager, requireWorkspace } from "@/lib/server-utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +17,8 @@ const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 export async function GET(request: Request) {
   try {
     // Only signed-in managers use this, which also bounds the traffic we send on.
-    await requireWorkspace();
+    const { role } = await requireWorkspace();
+    requireManager(role);
 
     const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
     if (query.length < 3) {

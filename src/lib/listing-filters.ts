@@ -6,9 +6,15 @@ export function listingFiltersFrom(
 ): ListingFilters {
   const features = new Set((params.features ?? "").split(",").filter(Boolean));
   return {
-    where: params.where,
-    maxRent: Number(params.maxRent) || undefined,
-    seats: Number(params.seats) || undefined,
+    where: params.where?.trim().slice(0, 120),
+    maxRent:
+      Number(params.maxRent) > 0 && Number(params.maxRent) <= 10_000_000
+        ? Number(params.maxRent)
+        : undefined,
+    seats:
+      Number.isInteger(Number(params.seats)) && Number(params.seats) > 0 && Number(params.seats) <= 20
+        ? Number(params.seats)
+        : undefined,
     attachedBathroom: features.has("bath"),
     balcony: features.has("balcony"),
     airConditioned: features.has("ac"),

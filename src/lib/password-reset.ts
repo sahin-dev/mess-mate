@@ -49,9 +49,16 @@ export async function createResetToken(db: Db, userId: string) {
 /** Resolves a token to its user, or null. Never says which check failed. */
 export async function consumeResetToken(db: Db, token: string) {
   if (typeof token !== "string" || token.length < 20) return null;
+  const now = new Date();
+  // Claim the token in the same database operation that verifies it. Without
+  // this, two concurrent requests can both reset the password with one link.
   const record = await db
     .collection<ResetTokenDocument>("passwordResets")
-    .findOne({ tokenHash: hashToken(token), expiresAt: { $gt: new Date() }, usedAt: { $exists: false } });
+    .findOneAndUpdate(
+      { tokenHash: hashToken(token), expiresAt: { $gt: now }, usedAt: { $exists: false } },
+      { $set: { usedAt: now } },
+      { returnDocument: "before" },
+    );
   if (!record) return null;
 
   // Constant-time compare, so a near-miss cannot be found by timing the lookup.
@@ -63,10 +70,4 @@ export async function consumeResetToken(db: Db, token: string) {
   if (!user) return null;
   return { user, tokenHash: record.tokenHash };
 }
-
-/** Marks the token spent. Called only once the new password is stored. */
-export async function markResetTokenUsed(db: Db, tokenHash: string) {
-  await db
-    .collection<ResetTokenDocument>("passwordResets")
-    .updateOne({ tokenHash }, { $set: { usedAt: new Date() } });
-}
+import "server-only";

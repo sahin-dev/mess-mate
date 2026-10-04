@@ -1,3 +1,5 @@
+import "server-only";
+
 import { isProduction } from "@/lib/env";
 
 /**

@@ -93,7 +93,7 @@ export function WorkspaceShell({
 }
 
 function ShellChrome({ children }: { children: ReactNode }) {
-  const { data, isManager, openPanel, panel } = useWorkspace();
+  const { data, isManager, openPanel, panel, notify } = useWorkspace();
   const pathname = usePathname();
   const router = useRouter();
   const periodHref = usePeriodHref();
@@ -126,10 +126,11 @@ function ShellChrome({ children }: { children: ReactNode }) {
   const signOut = async () => {
     try {
       await requestJson<{ ok: boolean }>("/api/auth", { action: "signout" });
-    } catch {
-      // The redirect below still ends the session on this device.
+      router.replace("/signin");
+      router.refresh();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Could not sign out. Please try again.", "error");
     }
-    router.replace("/signin");
   };
 
   const pendingBazar = data.bazar.filter(
@@ -137,8 +138,17 @@ function ShellChrome({ children }: { children: ReactNode }) {
       entry.status === "Pending" && (isManager || entry.memberId === data.workspace.userId),
   ).length;
   const joinRequests = data.members.filter((member) => member.status === "requested").length;
+  const pendingMeals = isManager
+    ? Object.values(data.memberMeals).flat().filter((entry) => entry.status === "Pending").length
+    : 0;
   const badgeFor = (href: string) =>
-    href === "/bazar" ? pendingBazar : href === "/members" && isManager ? joinRequests : 0;
+    href === "/bazar"
+      ? pendingBazar
+      : href === "/meals"
+        ? pendingMeals
+        : href === "/members" && isManager
+          ? joinRequests
+          : 0;
   const visibleNav = navItems.filter((item) => !item.managerOnly || isManager);
 
   return (
@@ -446,7 +456,7 @@ function greetingFor(name: string, timeZone: string) {
 }
 
 function QuickActions({ onClose }: { onClose: () => void }) {
-  const { isManager, openPanel } = useWorkspace();
+  const { data, isManager, openPanel } = useWorkspace();
   const periodHref = usePeriodHref();
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -459,6 +469,7 @@ function QuickActions({ onClose }: { onClose: () => void }) {
     href?: string;
     panel?: Panel;
     managerOnly?: boolean;
+    requiresOpenMonth?: boolean;
   }> = [
     {
       label: "Record today’s meals",
@@ -473,6 +484,7 @@ function QuickActions({ onClose }: { onClose: () => void }) {
       keywords: "grocery shopping receipt purchase",
       icon: ShoppingBasket,
       panel: "addBazar",
+      requiresOpenMonth: true,
     },
     {
       label: "Add a shared expense",
@@ -481,6 +493,7 @@ function QuickActions({ onClose }: { onClose: () => void }) {
       icon: ReceiptText,
       panel: "addExpense",
       managerOnly: true,
+      requiresOpenMonth: true,
     },
     {
       label: "Manage my money",
@@ -528,6 +541,7 @@ function QuickActions({ onClose }: { onClose: () => void }) {
   const visibleActions = actions.filter(
     (action) =>
       (!action.managerOnly || isManager) &&
+      (!action.requiresOpenMonth || data.closure.status === "open") &&
       (!search || `${action.label} ${action.description} ${action.keywords}`.toLowerCase().includes(search)),
   );
 
@@ -613,8 +627,12 @@ function Overlays({
   return (
     <>
       {panel === "quick" && <QuickActions onClose={() => openPanel(null)} />}
-      {panel === "addExpense" && <AddExpenseModal onClose={() => openPanel(null)} />}
-      {panel === "addBazar" && <AddBazarModal onClose={() => openPanel(null)} />}
+      {panel === "addExpense" && data.closure.status === "open" && (
+        <AddExpenseModal onClose={() => openPanel(null)} />
+      )}
+      {panel === "addBazar" && data.closure.status === "open" && (
+        <AddBazarModal onClose={() => openPanel(null)} />
+      )}
       {panel === "notifications" && (
         <Modal
           title="Recent activity"
