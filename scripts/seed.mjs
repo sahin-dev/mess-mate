@@ -42,6 +42,11 @@ const indexes = [
   ["meals", { messId: 1, userId: 1, date: 1 }, { unique: true }],
   ["meals", { messId: 1, date: 1 }, {}],
   ["expenses", { messId: 1, date: -1 }, {}],
+  [
+    "expenses",
+    { messId: 1, recurringKey: 1 },
+    { unique: true, partialFilterExpression: { recurringKey: { $type: "string" } } },
+  ],
   ["bazar", { messId: 1, date: -1 }, {}],
   ["activity", { messId: 1, createdAt: -1 }, {}],
   ["rooms", { messId: 1 }, {}],

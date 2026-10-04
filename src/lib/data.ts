@@ -178,7 +178,13 @@ export async function ensureIndexes(db: Db) {
     db.collection("meals").createIndex({ messId: 1, userId: 1, date: 1 }, { unique: true }),
     db.collection("meals").createIndex({ messId: 1, date: 1 }),
     db.collection("expenses").createIndex({ messId: 1, date: -1 }),
-    db.collection("expenses").createIndex({ messId: 1, recurringKey: 1 }, { unique: true, sparse: true }),
+    db.collection("expenses").createIndex(
+      { messId: 1, recurringKey: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { recurringKey: { $type: "string" } },
+      },
+    ),
     db.collection("settlementClosures").createIndex({ messId: 1, period: 1 }, { unique: true }),
     db
       .collection("settlementPayments")
