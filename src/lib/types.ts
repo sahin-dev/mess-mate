@@ -107,6 +107,8 @@ export type Member = {
   /** "requested" is a pending join request, awaiting a manager. */
   status: "active" | "invited" | "requested" | "former";
   joinedAt: string;
+  /** First date whose meals count toward open settlements. */
+  mealCountFrom: string;
   /** Last day included in settlement, when this person has left the mess. */
   leftAt?: string;
   color: string;

@@ -2148,10 +2148,10 @@ div.money-side-empty .button { width: max-content; }
 
 .members-head,
 .member-row {
-  min-width: 860px;
+  min-width: 1050px;
   padding: 0 20px;
   display: grid;
-  grid-template-columns: minmax(180px, 1.6fr) 100px 110px 70px 110px 100px 84px;
+  grid-template-columns: minmax(180px, 1.6fr) 100px 110px 70px 110px 110px 100px 124px;
   align-items: center;
   gap: 12px;
 }

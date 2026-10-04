@@ -49,6 +49,8 @@ export type MemberDocument = {
   roomId: string | null;
   status: Member["status"];
   joinedAt: string;
+  /** Overrides the current membership period's start for meal counting only. */
+  mealCountFrom?: string;
   leftAt?: string;
   requestedAt?: string;
   membershipPeriods?: { from: string; to: string | null }[];
@@ -359,6 +361,9 @@ export async function getWorkspaceData(
   const members: Member[] = memberDocs.map((member) => {
     const position = positions.get(member.id);
     const profile = member.userId ? profileById.get(member.userId) : undefined;
+    const currentMembership = [...(member.membershipPeriods ?? [])]
+      .reverse()
+      .find((entry) => !entry.to);
     // Everyone in this list shares the viewer's mess, so "mess" always passes;
     // what is actually being decided here is "private". A member who has not
     // signed up yet has no account to carry a choice, and their address is the
@@ -380,6 +385,7 @@ export async function getWorkspaceData(
       roomId: member.roomId,
       status: member.status,
       joinedAt: member.joinedAt,
+      mealCountFrom: member.mealCountFrom ?? currentMembership?.from ?? member.joinedAt.slice(0, 10),
       leftAt: member.leftAt,
       color: member.color,
       room: member.roomId ? (roomNames.get(member.roomId) ?? "Unassigned") : "Unassigned",

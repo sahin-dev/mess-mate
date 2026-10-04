@@ -1150,6 +1150,24 @@ export async function POST(request: Request) {
         `${user.name} made ${member.name} a ${nextRole.toLowerCase()}`,
         "blue",
       );
+    } else if (action === "setMealCountFrom") {
+      requireManager(role);
+      const id = cleanString(body.id, "Member", 100);
+      const mealCountFrom = dateString(body.mealCountFrom, "Meal counting date");
+      const member = await db
+        .collection<MemberDocument>("members")
+        .findOne({ id, messId, status: "active" });
+      if (!member) throw new ApiError(404, "That member is not active in this mess.");
+      await db
+        .collection<MemberDocument>("members")
+        .updateOne({ id, messId, status: "active" }, { $set: { mealCountFrom } });
+      await addActivity(
+        db,
+        messId,
+        "Meal counting date changed",
+        `${user.name} set ${member.name}'s meals to count from ${mealCountFrom}`,
+        "blue",
+      );
     } else if (action === "deleteMember") {
       requireManager(role);
       const id = cleanString(body.id, "Member", 100);

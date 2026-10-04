@@ -14,6 +14,8 @@ export type SettlementInput = {
     status: string;
     roomId: string | null;
     joinedAt?: string;
+    /** Overrides the open membership period's start for meal counting only. */
+    mealCountFrom?: string;
     leftAt?: string;
     membershipPeriods?: { from: string; to: string | null }[];
   }[];
@@ -53,6 +55,26 @@ export function memberActiveOn(member: SettlementMember, date: string) {
     return periods.some(({ from, to }) => from <= date && (!to || date <= to));
   }
   return member.status === "active";
+}
+
+/**
+ * Meal counting may start before or after the current membership period. Past
+ * membership periods keep their historical boundaries, and every other kind
+ * of settlement entry continues to use the real membership dates.
+ */
+function mealCountsOn(member: SettlementMember, date: string) {
+  if (!member.mealCountFrom) return memberActiveOn(member, date);
+  const periods = member.membershipPeriods?.length
+    ? member.membershipPeriods
+    : member.joinedAt
+      ? [{ from: member.joinedAt.slice(0, 10), to: member.leftAt?.slice(0, 10) ?? null }]
+      : [];
+  if (!periods.length) return member.status === "active" && member.mealCountFrom <= date;
+  const openPeriod = [...periods].reverse().find((period) => !period.to);
+  return periods.some((period) => {
+    const from = period === openPeriod ? member.mealCountFrom! : period.from;
+    return from <= date && (!period.to || date <= period.to);
+  });
 }
 
 function memberWasPresent(member: SettlementMember, period: Period) {
@@ -122,7 +144,18 @@ export function allocateExpenseShares(
  * A positive balance means the mess owes them; negative means they owe the mess.
  */
 export function computeSettlement(input: SettlementInput): Settlement {
-  const participants = input.members.filter((member) => memberWasPresent(member, input.period));
+  const participants = input.members.filter(
+    (member) =>
+      memberWasPresent(member, input.period) ||
+      input.meals.some(
+        (entry) =>
+          entry.userId === member.id &&
+          entry.status !== "Pending" &&
+          entry.status !== "Rejected" &&
+          entry.breakfast + entry.lunch + entry.dinner > 0 &&
+          mealCountsOn(member, entry.date),
+      ),
+  );
   const participantIds = new Set(participants.map((member) => member.id));
   const membersById = new Map(input.members.map((member) => [member.id, member]));
 
@@ -137,7 +170,7 @@ export function computeSettlement(input: SettlementInput): Settlement {
   for (const entry of input.meals) {
     if (entry.status === "Pending" || entry.status === "Rejected") continue;
     const member = membersById.get(entry.userId);
-    if (!member || !memberActiveOn(member, entry.date)) continue;
+    if (!member || !mealCountsOn(member, entry.date)) continue;
     const count = entry.breakfast + entry.lunch + entry.dinner;
     if (count <= 0) continue;
     totalMeals += count;

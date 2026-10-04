@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  CalendarDays,
   Check,
   KeyRound,
   LogOut,
@@ -44,6 +45,7 @@ export function MembersView() {
   const former = data.members.filter((member) => member.status === "former");
   const me = data.members.find((member) => member.id === data.workspace.userId);
   const [approving, setApproving] = useState<Member | null>(null);
+  const [editingMealDate, setEditingMealDate] = useState<Member | null>(null);
 
   const reject = (member: Member) =>
     confirm({
@@ -228,6 +230,7 @@ export function MembersView() {
               <span>Role</span>
               <span>Room</span>
               <span>Meals</span>
+              <span>Meals from</span>
               <span>Balance</span>
               <span>Joined</span>
               <span className="visually-hidden">Actions</span>
@@ -258,6 +261,11 @@ export function MembersView() {
                   <span className="cell-muted">
                     {member.status === "invited" ? "—" : member.meals}
                   </span>
+                  <span className="cell-muted">
+                    {member.status === "active"
+                      ? formatDate(member.mealCountFrom, { month: "short", year: "numeric" })
+                      : "—"}
+                  </span>
                   <strong
                     className={
                       member.status === "invited"
@@ -284,6 +292,18 @@ export function MembersView() {
                       : formatDate(member.joinedAt, { month: "short", year: "numeric" })}
                   </span>
                   <div className="row-actions">
+                    {isManager && member.status === "active" && (
+                      <button
+                        type="button"
+                        className="icon-action"
+                        disabled={busy}
+                        title={`Set when ${mine ? "your" : `${member.name}'s`} meals start counting`}
+                        aria-label={`Set meal counting date for ${member.name}`}
+                        onClick={() => setEditingMealDate(member)}
+                      >
+                        <CalendarDays size={16} aria-hidden="true" />
+                      </button>
+                    )}
                     {isManager && member.status === "active" && (
                       <button
                         type="button"
@@ -343,7 +363,57 @@ export function MembersView() {
 
       {inviting && <InviteModal onClose={() => setInviting(false)} />}
       {approving && <ApproveModal member={approving} onClose={() => setApproving(null)} />}
+      {editingMealDate && (
+        <MealCountDateModal member={editingMealDate} onClose={() => setEditingMealDate(null)} />
+      )}
     </>
+  );
+}
+
+function MealCountDateModal({ member, onClose }: { member: Member; onClose: () => void }) {
+  const { runAction, busy } = useWorkspace();
+  const [mealCountFrom, setMealCountFrom] = useState(member.mealCountFrom);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const result = await runAction(
+      "setMealCountFrom",
+      { id: member.id, mealCountFrom },
+      `${member.name}'s meal counting date updated.`,
+    );
+    if (result) onClose();
+  };
+
+  return (
+    <Modal
+      title={`Count ${member.name}'s meals from`}
+      subtitle="Choose the first date included in meal totals, the meal rate, and open settlements."
+      onClose={onClose}
+    >
+      <form onSubmit={submit}>
+        <label>
+          First counted date
+          <input
+            autoFocus
+            type="date"
+            required
+            value={mealCountFrom}
+            onChange={(event) => setMealCountFrom(event.target.value)}
+          />
+          <small className="field-hint">
+            Earlier saved meals remain visible. Closed-month settlements stay frozen.
+          </small>
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="button button-outline" onClick={onClose}>
+            Cancel
+          </button>
+          <ActionButton busy={busy} busyLabel="Saving…" type="submit">
+            Save date
+          </ActionButton>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
