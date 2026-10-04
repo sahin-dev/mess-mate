@@ -1145,6 +1145,89 @@ select:disabled {
   gap: 18px;
 }
 
+.personal-spend-card { padding: 22px; }
+
+.personal-spend-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.personal-spend-heading h3 { margin: 4px 0 5px; font-size: var(--text-lg); }
+.personal-spend-heading p { color: var(--muted); font-size: var(--text-sm); }
+
+.personal-spend-total {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.personal-spend-total span { color: var(--muted); font-size: var(--text-xs); }
+.personal-spend-total strong { font-family: var(--font-display); font-size: var(--text-2xl); }
+
+.personal-spend-summary {
+  margin: 20px 0 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.personal-spend-summary > div { padding: 14px 16px; border-left: 1px solid var(--line); }
+.personal-spend-summary > div:first-child { border-left: 0; }
+.personal-spend-summary dt { color: var(--muted); font-size: var(--text-xs); }
+.personal-spend-summary dd { margin: 4px 0 0; font-weight: 750; }
+
+.personal-spend-ledger { margin-top: 22px; }
+
+.personal-spend-ledger-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.personal-spend-ledger-heading h4 { margin-bottom: 3px; font-size: var(--text-sm); }
+.personal-spend-ledger-heading p { color: var(--muted); font-size: var(--text-xs); }
+.personal-spend-ledger-heading .text-button { display: inline-flex; align-items: center; gap: 3px; }
+.personal-spend-ledger ul { margin-top: 10px; }
+
+.personal-spend-row {
+  min-width: 0;
+  padding: 12px 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.personal-spend-row:first-child { border-top: 0; }
+.personal-spend-row > .metric-icon { grid-row: auto; }
+.personal-spend-row > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.personal-spend-row > div strong { font-size: var(--text-sm); }
+.personal-spend-row > div small { color: var(--muted); font-size: var(--text-xs); }
+.personal-spend-row > strong:last-child { font-size: var(--text-sm); }
+
+.personal-spend-formula {
+  margin-top: 8px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: var(--radius-sm);
+  color: var(--blue-ink);
+  background: var(--blue);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}
+
+.personal-spend-formula svg { flex: 0 0 auto; margin-top: 1px; }
+
 .meals-today { padding: 22px 22px 0; }
 
 .entry-window {
@@ -1336,6 +1419,15 @@ select:disabled {
 
 .position-breakdown dt { color: rgba(255, 255, 255, 0.72); }
 .position-breakdown dd { margin: 0; font-weight: 650; }
+
+.position-breakdown .position-total {
+  margin-bottom: 2px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.position-breakdown .position-total dt,
+.position-breakdown .position-total dd { color: #fff; font-weight: 750; }
 
 .settlement-action {
   width: 100%;
@@ -3525,7 +3617,9 @@ div.money-side-empty .button { width: max-content; }
 
   .welcome-strip,
   .view-title-row,
-  .meal-summary-banner { flex-direction: column; align-items: flex-start; }
+  .meal-summary-banner,
+  .personal-spend-heading { flex-direction: column; align-items: flex-start; }
+  .personal-spend-total { align-items: flex-start; }
   .strip-actions { width: 100%; }
   .strip-actions .button { flex: 1; }
   .manager-inbox { padding: 18px; }
@@ -3604,7 +3698,10 @@ div.money-side-empty .button { width: max-content; }
   .admin-metrics,
   .rent-summary,
   .money-summary-grid,
-  .money-side-stack { grid-template-columns: minmax(0, 1fr); }
+  .money-side-stack,
+  .personal-spend-summary { grid-template-columns: minmax(0, 1fr); }
+  .personal-spend-summary > div { border-left: 0; border-top: 1px solid var(--line); }
+  .personal-spend-summary > div:first-child { border-top: 0; }
   .money-toolbar { align-items: stretch; }
   .money-filters { justify-content: stretch; }
   .money-filters .filter-button { flex: 1; justify-content: center; }

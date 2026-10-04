@@ -10,9 +10,11 @@ import {
   Clock3,
   CookingPot,
   Handshake,
+  Home,
   Megaphone,
   Minus,
   Plus,
+  ReceiptText,
   ShoppingBasket,
   Sparkles,
   UserPlus,
@@ -21,10 +23,10 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { formatDate, formatMoney, pluralize, relativeTime, signedMoney } from "@/lib/format";
+import { formatDate, formatMoney, pluralize, relativeTime } from "@/lib/format";
 import { daysLeftInPeriod, periodLabel } from "@/lib/period";
 import { cutoffHasPassed, periodInZone, todayInZone } from "@/lib/timezone";
-import type { MealEntry, MealKey } from "@/lib/types";
+import type { Expense, MealEntry, MealKey, Member, WorkspaceData } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState } from "@/components/ui";
 import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
@@ -42,6 +44,7 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
 
   const activeMembers = data.members.filter((member) => member.status === "active");
   const me = data.members.find((member) => member.id === workspace.userId);
+  const personalSpend = getPersonalSpend(data, me);
   const timeZone = data.settings.timezone;
   const [loadedAt] = useState(() => Date.now());
   const isCurrentPeriod = data.period === periodInZone(timeZone);
@@ -151,36 +154,40 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
         ) : (
           <>
             <MetricCard
-              eyebrow="Your balance"
-              value={signedMoney(me?.balance ?? 0)}
-              meta={balanceLabel(me?.balance ?? 0)}
+              eyebrow="Your total spend"
+              value={formatMoney(personalSpend.total)}
+              meta="Meals and every bill share"
               icon={WalletCards}
-              tone={(me?.balance ?? 0) < 0 ? "rose" : "sage"}
+              tone="sage"
               href="/expenses"
             />
             <MetricCard
-              eyebrow="Your meals"
-              value={String(me?.meals ?? 0)}
-              meta={`${formatMoney(me?.mealCost ?? 0)} of food this month`}
-              icon={CookingPot}
+              eyebrow="Fixed bills"
+              value={formatMoney(personalSpend.fixedBills)}
+              meta="Your share of rent and recurring bills"
+              icon={Home}
               tone="sand"
-              href="/meals"
+              href="/expenses"
             />
             <MetricCard
-              eyebrow="Current meal rate"
-              value={settlement.totalMeals > 0 ? formatMoney(settlement.mealRate, { decimals: true }) : "—"}
-              meta={settlement.totalMeals > 0 ? "For every meal this month" : "Waiting for approved bazar"}
-              icon={Utensils}
+              eyebrow="Shared bills"
+              value={formatMoney(personalSpend.sharedBills)}
+              meta="Utilities, maintenance and other costs"
+              icon={ReceiptText}
               tone="blue"
-              delta={mealRateDelta(data.trend, data.period)}
+              href="/expenses"
             />
             <MetricCard
-              eyebrow="You paid"
-              value={formatMoney(me?.paid ?? 0)}
-              meta={ownPending.length ? `${pluralize(ownPending.length, "bazar entry", "bazar entries")} awaiting approval` : "Approved payments credited to you"}
-              icon={ShoppingBasket}
-              tone={ownPending.length ? "rose" : "sage"}
-              href="/bazar"
+              eyebrow="Meals from bazar"
+              value={formatMoney(personalSpend.meals)}
+              meta={
+                settlement.totalMeals > 0
+                  ? `${pluralize(me?.meals ?? 0, "meal")} × ${formatMoney(settlement.mealRate, { decimals: true })}`
+                  : "Waiting for approved bazar and meals"
+              }
+              icon={CookingPot}
+              tone="rose"
+              href="/meals"
             />
           </>
         )}
@@ -188,6 +195,7 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
+          <PersonalSpendOverview spend={personalSpend} />
           <TodayMeals />
           <RateTrend />
         </div>
@@ -209,6 +217,10 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
             </p>
             <strong className="owe-amount">{formatMoney(me?.balance ?? 0)}</strong>
             <dl className="position-breakdown">
+              <div className="position-total">
+                <dt>Your total spend</dt>
+                <dd>{formatMoney(personalSpend.total)}</dd>
+              </div>
               <div>
                 <dt>You paid</dt>
                 <dd>{formatMoney(me?.paid ?? 0)}</dd>
@@ -233,6 +245,147 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
         </aside>
       </div>
     </>
+  );
+}
+
+type PersonalBill = Pick<Expense, "id" | "title" | "category" | "date" | "splitMethod"> & {
+  share: number;
+};
+
+type PersonalSpend = {
+  total: number;
+  fixedBills: number;
+  sharedBills: number;
+  meals: number;
+  mealCount: number;
+  bills: PersonalBill[];
+};
+
+function getPersonalSpend(data: WorkspaceData, member: Member | undefined): PersonalSpend {
+  const shares = new Map(
+    data.money.transactions
+      .filter((transaction) => transaction.source === "mess" && transaction.id.startsWith("mess:"))
+      .map((transaction) => [transaction.id.slice("mess:".length), transaction.amount]),
+  );
+  const bills = data.expenses
+    .map((expense) => ({
+      id: expense.id,
+      title: expense.title,
+      category: expense.category,
+      date: expense.date,
+      splitMethod: expense.splitMethod,
+      share: shares.get(expense.id) ?? 0,
+    }))
+    .filter((expense) => expense.share > 0);
+  const fixedBills = bills
+    .filter((expense) => expense.category === "Fixed")
+    .reduce((sum, expense) => sum + expense.share, 0);
+  const sharedBills = bills
+    .filter((expense) => expense.category !== "Fixed")
+    .reduce((sum, expense) => sum + expense.share, 0);
+  const meals = member?.mealCost ?? 0;
+
+  return {
+    total: meals + (member?.expenseShare ?? fixedBills + sharedBills),
+    fixedBills,
+    sharedBills,
+    meals,
+    mealCount: member?.meals ?? 0,
+    bills,
+  };
+}
+
+function PersonalSpendOverview({ spend }: { spend: PersonalSpend }) {
+  const { data } = useWorkspace();
+  const periodHref = usePeriodHref();
+  const hasMealRate = data.settlement.totalMeals > 0;
+
+  return (
+    <section className="panel personal-spend-card" aria-labelledby="personal-spend-title">
+      <div className="personal-spend-heading">
+        <div>
+          <span className="section-kicker">YOUR MONTHLY SPENDING</span>
+          <h3 id="personal-spend-title">Every mess cost in one place</h3>
+          <p>Fixed bills, shared costs and bazar-funded meals for {periodLabel(data.period)}.</p>
+        </div>
+        <div className="personal-spend-total">
+          <span>Total spend</span>
+          <strong>{formatMoney(spend.total)}</strong>
+        </div>
+      </div>
+
+      <dl className="personal-spend-summary">
+        <div>
+          <dt>Fixed bills</dt>
+          <dd>{formatMoney(spend.fixedBills)}</dd>
+        </div>
+        <div>
+          <dt>Other shared bills</dt>
+          <dd>{formatMoney(spend.sharedBills)}</dd>
+        </div>
+        <div>
+          <dt>Meal cost</dt>
+          <dd>{formatMoney(spend.meals)}</dd>
+        </div>
+      </dl>
+
+      <div className="personal-spend-ledger">
+        <div className="personal-spend-ledger-heading">
+          <div>
+            <h4>Your bill breakdown</h4>
+            <p>Only your calculated share is shown here.</p>
+          </div>
+          <Link className="text-button" href={periodHref("/expenses")}>
+            Full report <ChevronRight size={15} aria-hidden="true" />
+          </Link>
+        </div>
+        <ul>
+          <li className="personal-spend-row meal-row">
+            <span className="metric-icon rose" aria-hidden="true">
+              <CookingPot size={18} />
+            </span>
+            <div>
+              <strong>Meals from bazar</strong>
+              <small>
+                {hasMealRate
+                  ? `${pluralize(spend.mealCount, "meal")} × ${formatMoney(data.settlement.mealRate, { decimals: true })}`
+                  : "The rate appears after bazar and meals are approved"}
+              </small>
+            </div>
+            <strong>{formatMoney(spend.meals)}</strong>
+          </li>
+          {spend.bills.map((bill) => {
+            const fixed = bill.category === "Fixed";
+            const Icon = fixed ? Home : ReceiptText;
+            return (
+              <li className="personal-spend-row" key={bill.id}>
+                <span className={`metric-icon ${fixed ? "sand" : "blue"}`} aria-hidden="true">
+                  <Icon size={18} />
+                </span>
+                <div>
+                  <strong>{bill.title}</strong>
+                  <small>
+                    {bill.category} &middot; {formatDate(bill.date, { day: "numeric", month: "short" })} &middot;{" "}
+                    {bill.splitMethod === "By room" ? "split by room" : "split equally"}
+                  </small>
+                </div>
+                <strong>{formatMoney(bill.share)}</strong>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      <div className="personal-spend-formula">
+        <ShoppingBasket size={17} aria-hidden="true" />
+        <p>
+          <strong>{formatMoney(data.settlement.bazarTotal)} approved bazar</strong>
+          {hasMealRate
+            ? ` ÷ ${pluralize(data.settlement.totalMeals, "meal")} = ${formatMoney(data.settlement.mealRate, { decimals: true })} per meal. Your bazar share is already included in the meal cost above.`
+            : " will be divided by approved meals to calculate everyone’s meal cost."}
+        </p>
+      </div>
+    </section>
   );
 }
 
@@ -423,11 +576,6 @@ function managerAttentionSummary(bazar: number, meals: number, members: number, 
   ]
     .filter(Boolean)
     .join(" · ");
-}
-
-function balanceLabel(balance: number) {
-  if (Math.abs(balance) < 1) return "You are fully settled";
-  return balance > 0 ? "The mess owes you" : "You owe the mess";
 }
 
 function SetupChecklist({ tasks }: { tasks: { done: boolean; label: string; href: string }[] }) {
