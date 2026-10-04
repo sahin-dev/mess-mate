@@ -5,6 +5,67 @@ export type MealKey = "breakfast" | "lunch" | "dinner";
 export type ExpenseCategory = "Fixed" | "Utility" | "Maintenance" | "Other";
 export type SplitMethod = "All members equally" | "By room";
 
+export const MONEY_EXPENSE_CATEGORIES = [
+  "Living",
+  "Food & dining",
+  "Transport",
+  "Shopping",
+  "Health",
+  "Education",
+  "Entertainment",
+  "Family",
+  "Other",
+] as const;
+export const MONEY_INCOME_CATEGORIES = [
+  "Salary",
+  "Freelance",
+  "Business",
+  "Gift",
+  "Other",
+] as const;
+export const MONEY_ACCOUNTS = ["Cash", "Bank", "Mobile wallet", "Card", "Other"] as const;
+
+export type MoneyExpenseCategory = (typeof MONEY_EXPENSE_CATEGORIES)[number];
+export type MoneyIncomeCategory = (typeof MONEY_INCOME_CATEGORIES)[number];
+export type MoneyCategory = MoneyExpenseCategory | MoneyIncomeCategory;
+export type MoneyAccount = (typeof MONEY_ACCOUNTS)[number];
+export type MoneyTransactionType = "Income" | "Expense";
+
+export type MoneyTransaction = {
+  id: string;
+  type: MoneyTransactionType;
+  title: string;
+  amount: number;
+  date: string;
+  category: MoneyCategory;
+  account: MoneyAccount | "MessMate";
+  note: string;
+  /** Mess entries are computed from shared costs and cannot be edited here. */
+  source: "manual" | "mess";
+  sourceLabel?: string;
+};
+
+export type MoneyBudget = {
+  category: MoneyExpenseCategory;
+  amount: number;
+  spent: number;
+};
+
+export type MoneyData = {
+  transactions: MoneyTransaction[];
+  budgets: MoneyBudget[];
+  summary: {
+    income: number;
+    expenses: number;
+    net: number;
+    budget: number;
+    budgetRemaining: number;
+    savingsRate: number | null;
+    livingExpenses: number;
+  };
+  byCategory: { category: MoneyExpenseCategory; amount: number }[];
+};
+
 /** Who can see one piece of a profile. */
 export type Visibility = "private" | "mess" | "public";
 
@@ -284,6 +345,8 @@ export type WorkspaceData = {
   settings: MessSettings;
   activity: ActivityItem[];
   settlement: Settlement;
+  /** Private to the signed-in account; never shared with mess managers. */
+  money: MoneyData;
   trend: TrendPoint[];
   roster: {
     date: string;

@@ -56,13 +56,20 @@ import {
   mergePreferences,
   mergeRules,
 } from "@/lib/listing-post";
+import type { MoneyBudgetDocument, MoneyTransactionDocument } from "@/lib/money";
 import type {
   Facility,
   MessProperty,
   MessSettings,
+  MoneyCategory,
   Room,
   TenantPreferences,
   UserRole,
+} from "@/lib/types";
+import {
+  MONEY_ACCOUNTS,
+  MONEY_EXPENSE_CATEGORIES,
+  MONEY_INCOME_CATEGORIES,
 } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -404,7 +411,65 @@ export async function POST(request: Request) {
       ...(mess.settings as Partial<MessSettings>),
     };
 
-    if (action === "saveMeals") {
+    if (action === "addMoneyTransaction" || action === "updateMoneyTransaction") {
+      const type = enumValue(body.type, ["Income", "Expense"] as const, "Transaction type");
+      const allowedCategories =
+        type === "Income" ? MONEY_INCOME_CATEGORIES : MONEY_EXPENSE_CATEGORIES;
+      const category = enumValue(body.category, allowedCategories, "Category") as MoneyCategory;
+      const now = new Date().toISOString();
+      const values = {
+        type,
+        title: cleanString(body.title, "Transaction title", 100),
+        amount: cleanNumber(body.amount, "Amount", 0.01),
+        date: dateString(body.date ?? todayInZone(settings.timezone)),
+        category,
+        account: enumValue(body.account, MONEY_ACCOUNTS, "Account"),
+        note: optionalText(body.note, 300),
+        updatedAt: now,
+      };
+      if (action === "addMoneyTransaction") {
+        const transaction: MoneyTransactionDocument = {
+          id: newId("money"),
+          userId: user.id,
+          ...values,
+          createdAt: now,
+        };
+        await db.collection<MoneyTransactionDocument>("moneyTransactions").insertOne(transaction);
+      } else {
+        const id = cleanString(body.id, "Transaction", 100);
+        const result = await db
+          .collection<MoneyTransactionDocument>("moneyTransactions")
+          .updateOne({ id, userId: user.id }, { $set: values });
+        if (!result.matchedCount) {
+          throw new ApiError(404, "That transaction no longer exists or is managed by MessMate.");
+        }
+      }
+    } else if (action === "deleteMoneyTransaction") {
+      const id = cleanString(body.id, "Transaction", 100);
+      const result = await db
+        .collection<MoneyTransactionDocument>("moneyTransactions")
+        .deleteOne({ id, userId: user.id });
+      if (!result.deletedCount) {
+        throw new ApiError(404, "That transaction no longer exists or is managed by MessMate.");
+      }
+    } else if (action === "setMoneyBudget") {
+      const category = enumValue(body.category, MONEY_EXPENSE_CATEGORIES, "Budget category");
+      const amount = cleanNumber(body.amount, "Budget", 0);
+      if (amount === 0) {
+        await db
+          .collection<MoneyBudgetDocument>("moneyBudgets")
+          .deleteOne({ userId: user.id, period, category });
+      } else {
+        await db.collection<MoneyBudgetDocument>("moneyBudgets").updateOne(
+          { userId: user.id, period, category },
+          {
+            $set: { amount, updatedAt: new Date().toISOString() },
+            $setOnInsert: { id: newId("budget"), userId: user.id, period, category },
+          },
+          { upsert: true },
+        );
+      }
+    } else if (action === "saveMeals") {
       const date = dateString(body.date);
       // A manager may record for anyone in the mess; everyone else only for
       // themselves, whatever the request claims.

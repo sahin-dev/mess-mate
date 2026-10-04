@@ -24,6 +24,13 @@ For a given month:
 Balances always sum to zero, and the app reduces them to the shortest list of
 payments that settles the month.
 
+The private **My money** ledger uses the member's economic share rather than
+the full amount they happened to pay up front. Their meal cost and share of
+every shared bill are added automatically to **Living**; repayments between
+members are settlement transfers, so they are not counted as a second expense.
+Personal transactions and category budgets are scoped to the signed-in account
+and are never exposed to managers or housemates.
+
 The maths lives in [`src/lib/settlement.ts`](src/lib/settlement.ts), separate from
 the database and the UI.
 
@@ -93,6 +100,7 @@ the rest of the app is served `noindex`.
 | `/meals`                 | Your own meal entries for the month              |
 | `/bazar`                 | Grocery ledger, receipts and the duty roster     |
 | `/expenses`              | Shared bills and the full settlement             |
+| `/money`                 | Private income, spending, Living costs and budgets |
 | `/house`                 | Building & flat, rooms, facilities, listings     |
 | `/members`               | Members and balances                             |
 | `/settings`              | Managers only                                    |

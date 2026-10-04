@@ -3,6 +3,11 @@ import { periodShortLabel, shiftPeriod, type Period } from "@/lib/period";
 import { DEFAULT_TIMEZONE, normalizeTimezone, periodInZone, todayInZone } from "@/lib/timezone";
 import { mailIsDelivered } from "@/lib/mail";
 import { buildRoster, computeSettlement } from "@/lib/settlement";
+import {
+  buildMoneyData,
+  type MoneyBudgetDocument,
+  type MoneyTransactionDocument,
+} from "@/lib/money";
 import type {
   ActivityItem,
   BazarEntry,
@@ -135,6 +140,11 @@ export async function ensureIndexes(db: Db) {
     db.collection("meals").createIndex({ messId: 1, userId: 1, date: 1 }, { unique: true }),
     db.collection("meals").createIndex({ messId: 1, date: 1 }),
     db.collection("expenses").createIndex({ messId: 1, date: -1 }),
+    db.collection("moneyTransactions").createIndex({ userId: 1, date: -1 }),
+    db.collection("moneyTransactions").createIndex({ id: 1 }, { unique: true }),
+    db
+      .collection("moneyBudgets")
+      .createIndex({ userId: 1, period: 1, category: 1 }, { unique: true }),
     db.collection("bazar").createIndex({ messId: 1, date: -1 }),
     db.collection("activity").createIndex({ messId: 1, createdAt: -1 }),
     db.collection("rooms").createIndex({ messId: 1 }),
@@ -168,7 +178,19 @@ export async function getWorkspaceData(
   const period = requestedPeriod ?? periodInZone(settings.timezone);
   const workspace = await workspaceFor(db, user, messId, role);
 
-  const [memberDocs, rooms, periodMeals, expenses, bazar, activity, trend, periods, listings] =
+  const [
+    memberDocs,
+    rooms,
+    periodMeals,
+    expenses,
+    bazar,
+    activity,
+    trend,
+    periods,
+    listings,
+    moneyTransactions,
+    moneyBudgets,
+  ] =
     await Promise.all([
       db.collection<MemberDocument>("members").find({ messId }).sort({ joinedAt: 1 }).toArray(),
       db.collection<RoomDocument>("rooms").find({ messId }).sort({ name: 1 }).toArray(),
@@ -194,8 +216,18 @@ export async function getWorkspaceData(
         .limit(25)
         .toArray(),
       loadTrend(db, messId, period),
-      loadPeriods(db, messId, period, settings.timezone),
+      loadPeriods(db, messId, user.id, period, settings.timezone),
       db.collection<ListingDocument>("listings").find({ messId }).sort({ updatedAt: -1 }).toArray(),
+      db
+        .collection<MoneyTransactionDocument>("moneyTransactions")
+        .find({ userId: user.id, date: inPeriod(period) })
+        .sort({ date: -1, createdAt: -1 })
+        .toArray(),
+      db
+        .collection<MoneyBudgetDocument>("moneyBudgets")
+        .find({ userId: user.id, period })
+        .sort({ category: 1 })
+        .toArray(),
     ]);
 
   // A member row belongs to the mess; the phone number and picture belong to
@@ -231,6 +263,19 @@ export async function getWorkspaceData(
     expenses: expenses.map((expense) => ({ ...expense, paidById: expense.createdBy })),
   });
   const positions = new Map(settlement.members.map((entry) => [entry.memberId, entry]));
+  const myMemberId = memberDocs.find((member) => member.userId === user.id)?.id ?? user.id;
+  const myPosition = positions.get(myMemberId);
+  const money = buildMoneyData({
+    period,
+    userId: myMemberId,
+    members: memberDocs,
+    rooms,
+    expenses,
+    mealCost: myPosition?.mealCost ?? 0,
+    mealCount: myPosition?.meals ?? 0,
+    manualTransactions: moneyTransactions,
+    budgets: moneyBudgets,
+  });
 
   const members: Member[] = memberDocs.map((member) => {
     const position = positions.get(member.id);
@@ -336,6 +381,7 @@ export async function getWorkspaceData(
       tone: item.tone,
     })),
     settlement,
+    money,
     trend,
     roster: buildRoster(
       memberDocs.map((member) => ({
@@ -407,18 +453,26 @@ async function loadTrend(db: Db, messId: string, period: Period): Promise<TrendP
 async function loadPeriods(
   db: Db,
   messId: string,
+  userId: string,
   period: Period,
   timeZone: string,
 ): Promise<Period[]> {
-  const [mealMonths, expenseMonths, bazarMonths] = await Promise.all([
+  const [mealMonths, expenseMonths, bazarMonths, moneyDates, budgetPeriods] = await Promise.all([
     db.collection("meals").distinct("date", { messId }),
     db.collection("expenses").distinct("date", { messId }),
     db.collection("bazar").distinct("date", { messId }),
+    db.collection("moneyTransactions").distinct("date", { userId }),
+    db.collection("moneyBudgets").distinct("period", { userId }),
   ]);
   const months = new Set<Period>([periodInZone(timeZone), period]);
-  for (const list of [mealMonths, expenseMonths, bazarMonths]) {
+  for (const list of [mealMonths, expenseMonths, bazarMonths, moneyDates]) {
     for (const date of list) {
       if (typeof date === "string" && date.length >= 7) months.add(date.slice(0, 7));
+    }
+  }
+  for (const budgetPeriod of budgetPeriods) {
+    if (typeof budgetPeriod === "string" && budgetPeriod.length === 7) {
+      months.add(budgetPeriod as Period);
     }
   }
   return [...months].sort().reverse().slice(0, 24);
@@ -601,6 +655,53 @@ export async function ensureDemoData(db: Db) {
     ] as const
   ).map((expense) => ({ ...expense, messId: demoMessId, createdBy: managerId, createdAt }));
 
+  const moneyTransactions: MoneyTransactionDocument[] = [
+    {
+      id: `money_demo_salary_${period}`,
+      userId: managerId,
+      type: "Income",
+      title: "Monthly salary",
+      amount: 62000,
+      date: day(1),
+      category: "Salary",
+      account: "Bank",
+      note: "",
+      createdAt,
+      updatedAt: createdAt,
+    },
+    {
+      id: `money_demo_transport_${period}`,
+      userId: managerId,
+      type: "Expense",
+      title: "Bus and rides",
+      amount: 1850,
+      date: day(Math.min(10, dayOfMonth)),
+      category: "Transport",
+      account: "Mobile wallet",
+      note: "Commute for the month so far",
+      createdAt,
+      updatedAt: createdAt,
+    },
+    {
+      id: `money_demo_mobile_${period}`,
+      userId: managerId,
+      type: "Expense",
+      title: "Mobile recharge",
+      amount: 698,
+      date: day(Math.min(4, dayOfMonth)),
+      category: "Other",
+      account: "Mobile wallet",
+      note: "",
+      createdAt,
+      updatedAt: createdAt,
+    },
+  ];
+  const moneyBudgets: MoneyBudgetDocument[] = [
+    { id: `budget_demo_living_${period}`, userId: managerId, period, category: "Living", amount: 15000, updatedAt: createdAt },
+    { id: `budget_demo_transport_${period}`, userId: managerId, period, category: "Transport", amount: 3500, updatedAt: createdAt },
+    { id: `budget_demo_food_${period}`, userId: managerId, period, category: "Food & dining", amount: 4000, updatedAt: createdAt },
+  ];
+
   const bazarBaskets = [
     [{ name: "Rice", quantity: "5 kg" }, { name: "Soybean oil", quantity: "2 L" }, { name: "Mixed vegetables", quantity: "3 kg" }],
     [{ name: "Chicken", quantity: "3 kg" }, { name: "Eggs", quantity: "24 pcs" }, { name: "Spices", quantity: "assorted" }],
@@ -662,6 +763,20 @@ export async function ensureDemoData(db: Db) {
     ...upsert("expenses", expenses),
     ...upsert("bazar", bazar),
     ...upsert("activity", activities),
+    ...moneyTransactions.map((entry) =>
+      db
+        .collection<MoneyTransactionDocument>("moneyTransactions")
+        .updateOne({ id: entry.id }, { $setOnInsert: entry }, { upsert: true }),
+    ),
+    ...moneyBudgets.map((entry) =>
+      db
+        .collection<MoneyBudgetDocument>("moneyBudgets")
+        .updateOne(
+          { userId: entry.userId, period: entry.period, category: entry.category },
+          { $setOnInsert: entry },
+          { upsert: true },
+        ),
+    ),
     // Meals are matched on the natural key the unique index enforces. Matching
     // on `id` would try to insert a second row for a day that already has one.
     ...meals.map((meal) =>

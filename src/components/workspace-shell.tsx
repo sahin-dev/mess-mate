@@ -61,7 +61,8 @@ const navItems: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: Gauge, mobile: true },
   { href: "/meals", label: "Meals", icon: Utensils, mobile: true },
   { href: "/bazar", label: "Bazar", icon: ShoppingBasket, mobile: true },
-  { href: "/expenses", label: "Expenses", icon: ReceiptText, mobile: true },
+  { href: "/expenses", label: "Expenses", icon: ReceiptText },
+  { href: "/money", label: "My money", icon: WalletCards, mobile: true },
   { href: "/house", label: "House", icon: Home },
   { href: "/members", label: "Members", icon: Users },
 ];
@@ -70,6 +71,7 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
   "/meals": { title: "Meal planner", subtitle: "Plan ahead and keep the kitchen count accurate." },
   "/bazar": { title: "Bazar & groceries", subtitle: "Track purchases, receipts and the duty roster." },
   "/expenses": { title: "Expenses", subtitle: "See where every taka goes and how it is shared." },
+  "/money": { title: "My money", subtitle: "A private view of income, spending and living costs." },
   "/house": { title: "The house", subtitle: "Address, rooms, facilities and what you advertise." },
   "/members": { title: "Members", subtitle: "See housemates, room assignments and balances in one place." },
   "/settings": { title: "Mess settings", subtitle: "Set the rules once and MessMate applies them for everyone." },
@@ -479,6 +481,13 @@ function QuickActions({ onClose }: { onClose: () => void }) {
       icon: ReceiptText,
       panel: "addExpense",
       managerOnly: true,
+    },
+    {
+      label: "Manage my money",
+      description: "Add income or spending and review budgets.",
+      keywords: "personal money income spending budget finance",
+      icon: WalletCards,
+      href: "/money",
     },
     {
       label: "Review settlement",
