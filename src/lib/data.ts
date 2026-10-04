@@ -20,6 +20,7 @@ import type {
   MessSettings,
   ProfileVisibility,
   Room,
+  Settlement,
   TrendPoint,
   UserRole,
   WorkspaceData,
@@ -46,6 +47,9 @@ export type MemberDocument = {
   roomId: string | null;
   status: Member["status"];
   joinedAt: string;
+  leftAt?: string;
+  requestedAt?: string;
+  membershipPeriods?: { from: string; to: string | null }[];
   color: string;
 };
 /** Rooms created before the house fields existed simply lack them. */
@@ -89,6 +93,36 @@ export type ExpenseDocument = Omit<Expense, "paidBy" | "paidById"> & {
   messId: string;
   createdBy: string;
   createdAt: string;
+  recurringKey?: string;
+};
+export type SettlementClosureDocument = {
+  id: string;
+  messId: string;
+  period: Period;
+  status: "closed" | "reopened";
+  settlement: Settlement;
+  closedAt: string;
+  closedBy: string;
+  updatedAt: string;
+  events: {
+    action: "closed" | "reopened";
+    at: string;
+    byId: string;
+    by: string;
+    reason?: string;
+  }[];
+};
+export type SettlementPaymentDocument = {
+  id: string;
+  messId: string;
+  period: Period;
+  fromId: string;
+  toId: string;
+  amount: number;
+  status: "paid";
+  paidAt: string;
+  paidById: string;
+  paidBy: string;
 };
 export type BazarDocument = Omit<BazarEntry, "hasProof"> & {
   messId: string;
@@ -117,6 +151,7 @@ export const defaultSettings: MessSettings = {
   bazarApproval: true,
   requireProof: false,
   rosterFrequency: "alternate",
+  customRosterDays: [1, 3, 5],
   notifications: { cutoff: true, roster: true, settlement: false },
   fixedExpenses: [
     { id: "fixed_wifi", title: "Wi-Fi", amount: 1200 },
@@ -140,6 +175,11 @@ export async function ensureIndexes(db: Db) {
     db.collection("meals").createIndex({ messId: 1, userId: 1, date: 1 }, { unique: true }),
     db.collection("meals").createIndex({ messId: 1, date: 1 }),
     db.collection("expenses").createIndex({ messId: 1, date: -1 }),
+    db.collection("expenses").createIndex({ messId: 1, recurringKey: 1 }, { unique: true, sparse: true }),
+    db.collection("settlementClosures").createIndex({ messId: 1, period: 1 }, { unique: true }),
+    db
+      .collection("settlementPayments")
+      .createIndex({ messId: 1, period: 1, fromId: 1, toId: 1, amount: 1 }, { unique: true }),
     db.collection("moneyTransactions").createIndex({ userId: 1, date: -1 }),
     db.collection("moneyTransactions").createIndex({ id: 1 }, { unique: true }),
     db
@@ -190,6 +230,8 @@ export async function getWorkspaceData(
     listings,
     moneyTransactions,
     moneyBudgets,
+    closureDocument,
+    settlementPayments,
   ] =
     await Promise.all([
       db.collection<MemberDocument>("members").find({ messId }).sort({ joinedAt: 1 }).toArray(),
@@ -228,6 +270,13 @@ export async function getWorkspaceData(
         .find({ userId: user.id, period })
         .sort({ category: 1 })
         .toArray(),
+      db
+        .collection<SettlementClosureDocument>("settlementClosures")
+        .findOne({ messId, period }),
+      db
+        .collection<SettlementPaymentDocument>("settlementPayments")
+        .find({ messId, period, status: "paid" })
+        .toArray(),
     ]);
 
   // A member row belongs to the mess; the phone number and picture belong to
@@ -254,7 +303,7 @@ export async function getWorkspaceData(
   const property = mergeProperty(mess?.property as Partial<MessProperty> | undefined, mess?.location ?? "");
   const facilities = mergeFacilities(mess?.facilities as Facility[] | undefined);
 
-  const settlement = computeSettlement({
+  const liveSettlement = computeSettlement({
     period,
     members: memberDocs,
     rooms,
@@ -262,6 +311,27 @@ export async function getWorkspaceData(
     bazar,
     expenses: expenses.map((expense) => ({ ...expense, paidById: expense.createdBy })),
   });
+  const baseSettlement = closureDocument?.status === "closed"
+    ? closureDocument.settlement
+    : liveSettlement;
+  const paymentsByTransfer = new Map(
+    settlementPayments.map((payment) => [
+      `${payment.fromId}:${payment.toId}:${payment.amount}`,
+      payment,
+    ]),
+  );
+  const settlement: Settlement = {
+    ...baseSettlement,
+    transfers: baseSettlement.transfers.map((transfer) => {
+      const payment = paymentsByTransfer.get(`${transfer.fromId}:${transfer.toId}:${transfer.amount}`);
+      return {
+        ...transfer,
+        paymentStatus: payment ? ("paid" as const) : ("pending" as const),
+        paidAt: payment?.paidAt,
+        paidBy: payment?.paidBy,
+      };
+    }),
+  };
   const positions = new Map(settlement.members.map((entry) => [entry.memberId, entry]));
   const myMemberId = memberDocs.find((member) => member.userId === user.id)?.id ?? user.id;
   const myPosition = positions.get(myMemberId);
@@ -301,6 +371,7 @@ export async function getWorkspaceData(
       roomId: member.roomId,
       status: member.status,
       joinedAt: member.joinedAt,
+      leftAt: member.leftAt,
       color: member.color,
       room: member.roomId ? (roomNames.get(member.roomId) ?? "Unassigned") : "Unassigned",
       meals: position?.meals ?? 0,
@@ -360,6 +431,7 @@ export async function getWorkspaceData(
       splitMethod: expense.splitMethod === "By room" ? "By room" : "All members equally",
       paidById: expense.createdBy,
       paidBy: memberNames.get(expense.createdBy) ?? "A former member",
+      shares: expense.shares,
     })),
     bazar: bazar.map((entry) => ({
       id: entry.id,
@@ -381,6 +453,13 @@ export async function getWorkspaceData(
       tone: item.tone,
     })),
     settlement,
+    closure: closureDocument?.status === "closed"
+      ? {
+          status: "closed",
+          closedAt: closureDocument.closedAt,
+          closedBy: closureDocument.closedBy,
+        }
+      : { status: "open", closedAt: null, closedBy: null },
     money,
     trend,
     roster: buildRoster(
@@ -390,6 +469,9 @@ export async function getWorkspaceData(
       })),
       settings.rosterFrequency,
       settings.timezone,
+      undefined,
+      6,
+      settings.customRosterDays,
     ),
   };
 }
@@ -457,12 +539,13 @@ async function loadPeriods(
   period: Period,
   timeZone: string,
 ): Promise<Period[]> {
-  const [mealMonths, expenseMonths, bazarMonths, moneyDates, budgetPeriods] = await Promise.all([
+  const [mealMonths, expenseMonths, bazarMonths, moneyDates, budgetPeriods, closurePeriods] = await Promise.all([
     db.collection("meals").distinct("date", { messId }),
     db.collection("expenses").distinct("date", { messId }),
     db.collection("bazar").distinct("date", { messId }),
     db.collection("moneyTransactions").distinct("date", { userId }),
     db.collection("moneyBudgets").distinct("period", { userId }),
+    db.collection("settlementClosures").distinct("period", { messId }),
   ]);
   const months = new Set<Period>([periodInZone(timeZone), period]);
   for (const list of [mealMonths, expenseMonths, bazarMonths, moneyDates]) {
@@ -473,6 +556,11 @@ async function loadPeriods(
   for (const budgetPeriod of budgetPeriods) {
     if (typeof budgetPeriod === "string" && budgetPeriod.length === 7) {
       months.add(budgetPeriod as Period);
+    }
+  }
+  for (const closurePeriod of closurePeriods) {
+    if (typeof closurePeriod === "string" && closurePeriod.length === 7) {
+      months.add(closurePeriod as Period);
     }
   }
   return [...months].sort().reverse().slice(0, 24);

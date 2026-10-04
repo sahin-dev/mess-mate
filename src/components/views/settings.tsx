@@ -40,6 +40,15 @@ const MEAL_LABEL: Record<MealKey, string> = {
   lunch: "Lunch",
   dinner: "Dinner",
 };
+const WEEKDAYS = [
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+];
 
 export function SettingsView() {
   const { data } = useWorkspace();
@@ -264,6 +273,40 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
                 </select>
               </label>
             </div>
+            {settings.rosterFrequency === "custom" && (
+              <div className="setting-row block">
+                <div>
+                  <strong>Shopping days</strong>
+                  <p>Select at least one weekday. Duty rotates only on these days.</p>
+                </div>
+                <div className="meal-checkboxes">
+                  {WEEKDAYS.map((day) => {
+                    const selected = settings.customRosterDays.includes(day.value);
+                    return (
+                      <button
+                        type="button"
+                        key={day.value}
+                        className={selected ? "selected" : ""}
+                        aria-pressed={selected}
+                        onClick={() =>
+                          patch({
+                            customRosterDays: selected
+                              ? settings.customRosterDays.filter((value) => value !== day.value)
+                              : [...settings.customRosterDays, day.value].sort(),
+                          })
+                        }
+                      >
+                        <span aria-hidden="true">{selected && <Check size={13} />}</span>
+                        {day.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {settings.customRosterDays.length === 0 && (
+                  <p className="inline-notice">Choose at least one shopping day before saving.</p>
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -276,8 +319,8 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
               <div>
                 <h3>Fixed monthly bills</h3>
                 <p>
-                  A reminder list of what recurs each month. Add them as expenses to include them in
-                  the settlement.
+                  Reusable bill templates. Add them once from Expenses each month; MessMate skips
+                  anything already generated.
                 </p>
               </div>
             </div>

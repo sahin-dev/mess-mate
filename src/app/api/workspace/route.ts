@@ -12,6 +12,8 @@ import {
   type MealDocument,
   type MemberDocument,
   type RoomDocument,
+  type SettlementClosureDocument,
+  type SettlementPaymentDocument,
 } from "@/lib/data";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -22,6 +24,7 @@ import { mergeVisibility } from "@/lib/visibility";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendMail } from "@/lib/mail";
 import { isPeriod, type Period } from "@/lib/period";
+import { allocateExpenseShares } from "@/lib/settlement";
 import {
   cutoffHasPassed,
   DEFAULT_TIMEZONE,
@@ -238,6 +241,32 @@ async function uniqueJoinCode(
   throw new ApiError(503, "Could not generate a join code. Please try again.");
 }
 
+async function assertMonthOpen(
+  db: Awaited<ReturnType<typeof requireSession>>["db"],
+  messId: string,
+  date: string,
+) {
+  const period = date.slice(0, 7) as Period;
+  const closure = await db
+    .collection<SettlementClosureDocument>("settlementClosures")
+    .findOne({ messId, period, status: "closed" });
+  if (closure) {
+    throw new ApiError(
+      409,
+      `${period} is closed. A manager must reopen the month before changing its records.`,
+    );
+  }
+}
+
+function closedMembership(member: MemberDocument, date: string) {
+  const membershipPeriods = member.membershipPeriods?.length
+    ? member.membershipPeriods.map((entry, index, all) =>
+        index === all.length - 1 && !entry.to ? { ...entry, to: date } : entry,
+      )
+    : [{ from: member.joinedAt.slice(0, 10), to: date }];
+  return { status: "former" as const, leftAt: date, membershipPeriods };
+}
+
 export async function GET(request: Request) {
   try {
     const { db, user, mess, role } = await requireWorkspace();
@@ -284,6 +313,7 @@ export async function POST(request: Request) {
         roomId: null,
         status: "active",
         joinedAt: createdAt.slice(0, 10),
+        membershipPeriods: [{ from: createdAt.slice(0, 10), to: null }],
         color: MEMBER_COLORS[0],
       };
       await db.collection<MessDocument>("messes").insertOne(mess);
@@ -319,6 +349,23 @@ export async function POST(request: Request) {
         return Response.json({ status: "pending", messName: mess.name });
       }
 
+      if (existing?.status === "former") {
+        await db.collection<MemberDocument>("members").updateOne(
+          { id: existing.id, messId: mess.id },
+          {
+            $set: {
+              userId: user.id,
+              name: user.name,
+              email: user.email,
+              status: "requested",
+              requestedAt: todayInZone(DEFAULT_TIMEZONE),
+            },
+          },
+        );
+        await addActivity(db, mess.id, "Join request", `${user.name} asked to rejoin`, "blue");
+        return Response.json({ status: "pending", messName: mess.name });
+      }
+
       // An invitation is the manager having already said yes, so it converts
       // straight into membership rather than asking them again.
       if (existing?.status === "invited") {
@@ -331,6 +378,7 @@ export async function POST(request: Request) {
           name: user.name,
           status: "active",
           joinedAt: todayInZone(DEFAULT_TIMEZONE),
+          membershipPeriods: [{ from: todayInZone(DEFAULT_TIMEZONE), to: null }],
         });
         const role: UserRole = existing.role === "Manager" ? "manager" : "member";
         await setActiveWorkspace(db, session, mess.id, role);
@@ -360,9 +408,23 @@ export async function POST(request: Request) {
 
     if (action === "cancelJoinRequest") {
       const { db, user } = await requireSession();
-      await db
+      const requests = await db
         .collection<MemberDocument>("members")
-        .deleteMany({ userId: user.id, status: "requested" });
+        .find({ userId: user.id, status: "requested" })
+        .toArray();
+      for (const membership of requests) {
+        if (membership.membershipPeriods?.length) {
+          await db.collection<MemberDocument>("members").updateOne(
+            { id: membership.id, messId: membership.messId },
+            { $set: { status: "former" }, $unset: { requestedAt: "" } },
+          );
+        } else {
+          await db.collection<MemberDocument>("members").deleteOne({
+            id: membership.id,
+            messId: membership.messId,
+          });
+        }
+      }
       return Response.json({ ok: true });
     }
 
@@ -388,7 +450,13 @@ export async function POST(request: Request) {
         throw new ApiError(409, "Your bazar entries are still awaiting approval. Ask a manager to review them first.");
       }
 
-      await db.collection<MemberDocument>("members").deleteOne({ id: membership.id, messId: mess!.id });
+      const leftAt = todayInZone(
+        ((mess?.settings as Partial<MessSettings> | undefined)?.timezone) ?? DEFAULT_TIMEZONE,
+      );
+      await db.collection<MemberDocument>("members").updateOne(
+        { id: membership.id, messId: mess!.id },
+        { $set: closedMembership(membership, leftAt) },
+      );
       await db
         .collection("sessions")
         .updateMany({ userId: user.id }, { $set: { activeMessId: null, role: null } });
@@ -469,8 +537,124 @@ export async function POST(request: Request) {
           { upsert: true },
         );
       }
+    } else if (action === "markSettlementPaid" || action === "markSettlementUnpaid") {
+      const fromId = cleanString(body.fromId, "Payer", 100);
+      const toId = cleanString(body.toId, "Recipient", 100);
+      const amount = Math.round(cleanNumber(body.amount, "Payment amount", 1));
+      const snapshot = await getWorkspaceData(db, user, messId, role, period);
+      const transfer = snapshot.settlement.transfers.find(
+        (entry) => entry.fromId === fromId && entry.toId === toId && entry.amount === amount,
+      );
+      if (!transfer) throw new ApiError(409, "That settlement payment is no longer required.");
+      const membership = await db
+        .collection<MemberDocument>("members")
+        .findOne({ messId, userId: user.id });
+      const canConfirm =
+        role === "manager" || role === "admin" || membership?.id === fromId || membership?.id === toId;
+      if (!canConfirm) throw new ApiError(403, "Only the payer, recipient, or a manager can update this payment.");
+      const filter = { messId, period, fromId, toId, amount };
+      if (action === "markSettlementPaid") {
+        const paidAt = new Date().toISOString();
+        await db.collection<SettlementPaymentDocument>("settlementPayments").updateOne(
+          filter,
+          {
+            $set: { status: "paid", paidAt, paidById: user.id, paidBy: user.name },
+            $setOnInsert: { id: newId("payment"), ...filter },
+          },
+          { upsert: true },
+        );
+        await addActivity(
+          db,
+          messId,
+          "Settlement payment confirmed",
+          `${user.name} marked ${transfer.from}'s BDT ${amount.toLocaleString("en-US")} payment to ${transfer.to} as paid`,
+          "green",
+        );
+      } else {
+        const result = await db
+          .collection<SettlementPaymentDocument>("settlementPayments")
+          .deleteOne(filter);
+        if (!result.deletedCount) throw new ApiError(409, "That payment is already pending.");
+        await addActivity(
+          db,
+          messId,
+          "Settlement payment reopened",
+          `${user.name} marked ${transfer.from}'s payment to ${transfer.to} as pending`,
+          "coral",
+        );
+      }
+    } else if (action === "closeMonth") {
+      requireManager(role);
+      const closePeriod = periodFrom(body.closePeriod ?? body.period, settings.timezone);
+      if (closePeriod > periodInZone(settings.timezone)) {
+        throw new ApiError(400, "A future month cannot be closed.");
+      }
+      const existing = await db
+        .collection<SettlementClosureDocument>("settlementClosures")
+        .findOne({ messId, period: closePeriod, status: "closed" });
+      if (existing) throw new ApiError(409, "That month is already closed.");
+      const [pendingBazar, pendingMeals] = await Promise.all([
+        db.collection<BazarDocument>("bazar").countDocuments({
+          messId,
+          status: "Pending",
+          date: { $gte: `${closePeriod}-01`, $lte: `${closePeriod}-31` },
+        }),
+        db.collection<MealDocument>("meals").countDocuments({
+          messId,
+          status: "Pending",
+          date: { $gte: `${closePeriod}-01`, $lte: `${closePeriod}-31` },
+        }),
+      ]);
+      if (pendingBazar || pendingMeals) {
+        const count = pendingBazar + pendingMeals;
+        throw new ApiError(
+          409,
+          `Review ${count} pending ${count === 1 ? "entry" : "entries"} before closing this month.`,
+        );
+      }
+      const snapshot = await getWorkspaceData(db, user, messId, role, closePeriod);
+      const now = new Date().toISOString();
+      await db.collection<SettlementClosureDocument>("settlementClosures").updateOne(
+        { messId, period: closePeriod },
+        {
+          $set: {
+            status: "closed",
+            settlement: snapshot.settlement,
+            closedAt: now,
+            closedBy: user.name,
+            updatedAt: now,
+          },
+          $setOnInsert: { id: newId("closure"), messId, period: closePeriod },
+          $push: { events: { action: "closed", at: now, byId: user.id, by: user.name } },
+        },
+        { upsert: true },
+      );
+      await addActivity(db, messId, "Month closed", `${user.name} closed ${closePeriod}`, "green");
+    } else if (action === "reopenMonth") {
+      requireManager(role);
+      const reopenPeriod = periodFrom(body.reopenPeriod ?? body.period, settings.timezone);
+      const reason = cleanString(body.reason, "Reason", 240);
+      const now = new Date().toISOString();
+      const result = await db.collection<SettlementClosureDocument>("settlementClosures").updateOne(
+        { messId, period: reopenPeriod, status: "closed" },
+        {
+          $set: { status: "reopened", updatedAt: now },
+          $push: {
+            events: { action: "reopened", at: now, byId: user.id, by: user.name, reason },
+          },
+        },
+      );
+      if (!result.matchedCount) throw new ApiError(409, "That month is not closed.");
+      await addActivity(
+        db,
+        messId,
+        "Month reopened",
+        `${user.name} reopened ${reopenPeriod}: ${reason}`,
+        "coral",
+      );
     } else if (action === "saveMeals") {
       const date = dateString(body.date);
+      await assertMonthOpen(db, messId, date);
       // A manager may record for anyone in the mess; everyone else only for
       // themselves, whatever the request claims.
       const target = await resolveMealTarget(db, messId, user.id, role, body.memberId);
@@ -485,7 +669,10 @@ export async function POST(request: Request) {
       await db.collection<MealDocument>("meals").updateOne(
         { messId, userId: target.id, date },
         {
-          $set: { ...values, status: settings.mealApproval ? "Pending" : "Open" },
+          $set: {
+            ...values,
+            status: settings.mealApproval && role === "member" ? "Pending" : "Open",
+          },
           $setOnInsert: { id: newId("meal"), messId, userId: target.id, date },
         },
         { upsert: true },
@@ -499,6 +686,31 @@ export async function POST(request: Request) {
           "blue",
         );
       }
+    } else if (action === "reviewMeal") {
+      requireManager(role);
+      const id = cleanString(body.id, "Meal entry", 100);
+      const status = enumValue(body.status, ["Open", "Rejected"] as const, "Review decision");
+      const meal = await db.collection<MealDocument>("meals").findOne({ id, messId });
+      if (!meal) throw new ApiError(404, "That meal entry no longer exists.");
+      await assertMonthOpen(db, messId, meal.date);
+      if (meal.status !== "Pending") {
+        throw new ApiError(409, "That meal entry has already been reviewed.");
+      }
+      await db.collection<MealDocument>("meals").updateOne(
+        { id, messId, status: "Pending" },
+        { $set: { status } },
+      );
+      const member = await db.collection<MemberDocument>("members").findOne({
+        id: meal.userId,
+        messId,
+      });
+      await addActivity(
+        db,
+        messId,
+        status === "Open" ? "Meals approved" : "Meals rejected",
+        `${user.name} ${status === "Open" ? "approved" : "rejected"} ${member?.name ?? "a member"}'s meals for ${meal.date}`,
+        status === "Open" ? "green" : "coral",
+      );
     } else if (action === "addExpense") {
       requireManager(role);
       const expense: ExpenseDocument = {
@@ -520,11 +732,20 @@ export async function POST(request: Request) {
         createdBy: cleanString(body.paidById ?? user.id, "Paid by", 100),
         createdAt: new Date().toISOString(),
       };
+      await assertMonthOpen(db, messId, expense.date);
       // The payer has to be someone in this mess, or the balances will not add up.
       const payer = await db
         .collection<MemberDocument>("members")
         .findOne({ id: expense.createdBy, messId, status: "active" });
       if (!payer) throw new ApiError(400, "Choose an active member who paid for this expense.");
+      const [members, rooms] = await Promise.all([
+        db.collection<MemberDocument>("members").find({ messId }).toArray(),
+        db.collection<RoomDocument>("rooms").find({ messId }).toArray(),
+      ]);
+      expense.shares = allocateExpenseShares(expense, members, rooms);
+      if (!expense.shares.length) {
+        throw new ApiError(409, "No active members can share this expense on that date.");
+      }
       await db.collection<ExpenseDocument>("expenses").insertOne(expense);
       await addActivity(
         db,
@@ -533,9 +754,54 @@ export async function POST(request: Request) {
         `${user.name} recorded BDT ${expense.amount.toLocaleString("en-US")} paid by ${payer.name}`,
         "coral",
       );
+    } else if (action === "generateFixedExpenses") {
+      requireManager(role);
+      await assertMonthOpen(db, messId, `${period}-01`);
+      const payer = await db
+        .collection<MemberDocument>("members")
+        .findOne({ messId, userId: user.id, status: "active" });
+      if (!payer) throw new ApiError(409, "Your active membership could not be found.");
+      const [members, rooms] = await Promise.all([
+        db.collection<MemberDocument>("members").find({ messId }).toArray(),
+        db.collection<RoomDocument>("rooms").find({ messId }).toArray(),
+      ]);
+      let created = 0;
+      for (const template of settings.fixedExpenses.filter((entry) => entry.amount > 0)) {
+        const recurringKey = `${period}:${template.id}`;
+        const expense: ExpenseDocument = {
+          id: newId("expense"),
+          messId,
+          title: template.title,
+          amount: template.amount,
+          category: "Fixed",
+          splitMethod: "All members equally",
+          date: `${period}-01`,
+          createdBy: payer.id,
+          createdAt: new Date().toISOString(),
+          recurringKey,
+        };
+        expense.shares = allocateExpenseShares(expense, members, rooms);
+        if (!expense.shares.length) continue;
+        const result = await db.collection<ExpenseDocument>("expenses").updateOne(
+          { messId, recurringKey },
+          { $setOnInsert: expense },
+          { upsert: true },
+        );
+        created += result.upsertedCount;
+      }
+      await addActivity(
+        db,
+        messId,
+        "Fixed bills generated",
+        `${user.name} added ${created} fixed ${created === 1 ? "bill" : "bills"} for ${period}`,
+        "blue",
+      );
     } else if (action === "deleteExpense") {
       requireManager(role);
       const id = cleanString(body.id, "Expense", 100);
+      const expense = await db.collection<ExpenseDocument>("expenses").findOne({ id, messId });
+      if (!expense) throw new ApiError(404, "That expense no longer exists.");
+      await assertMonthOpen(db, messId, expense.date);
       const result = await db.collection<ExpenseDocument>("expenses").deleteOne({ id, messId });
       if (!result.deletedCount) throw new ApiError(404, "That expense no longer exists.");
     } else if (action === "addBazar") {
@@ -585,6 +851,7 @@ export async function POST(request: Request) {
         proofName: proof?.name,
         createdAt: new Date().toISOString(),
       };
+      await assertMonthOpen(db, messId, entry.date);
       await db.collection<BazarDocument>("bazar").insertOne(entry);
       await addActivity(
         db,
@@ -599,6 +866,9 @@ export async function POST(request: Request) {
       requireManager(role);
       const id = cleanString(body.id, "Bazar entry", 100);
       const status = enumValue(body.status, ["Pending", "Approved"] as const, "Status");
+      const entry = await db.collection<BazarDocument>("bazar").findOne({ id, messId });
+      if (!entry) throw new ApiError(404, "That bazar entry no longer exists.");
+      await assertMonthOpen(db, messId, entry.date);
       const result = await db
         .collection<BazarDocument>("bazar")
         .updateOne({ id, messId }, { $set: { status } });
@@ -615,6 +885,11 @@ export async function POST(request: Request) {
       // Members may withdraw their own entry; managers may remove any.
       const filter =
         role === "manager" || role === "admin" ? { id, messId } : { id, messId, memberId: user.id };
+      const entry = await db.collection<BazarDocument>("bazar").findOne(filter);
+      if (!entry) {
+        throw new ApiError(404, "That entry no longer exists, or it is not yours to remove.");
+      }
+      await assertMonthOpen(db, messId, entry.date);
       const result = await db.collection<BazarDocument>("bazar").deleteOne(filter);
       if (!result.deletedCount) {
         throw new ApiError(404, "That entry no longer exists, or it is not yours to remove.");
@@ -699,7 +974,7 @@ export async function POST(request: Request) {
     } else if (action === "deleteRoom") {
       requireManager(role);
       const id = cleanString(body.id, "Room", 100);
-      if (await db.collection<MemberDocument>("members").findOne({ messId, roomId: id })) {
+      if (await db.collection<MemberDocument>("members").findOne({ messId, roomId: id, status: "active" })) {
         throw new ApiError(409, "Move the residents out before deleting this room.");
       }
       const result = await db.collection<RoomDocument>("rooms").deleteOne({ id, messId });
@@ -717,14 +992,14 @@ export async function POST(request: Request) {
           .findOne({ id: memberId, messId });
         const occupied = await db
           .collection<MemberDocument>("members")
-          .countDocuments({ messId, roomId });
+          .countDocuments({ messId, roomId, status: "active" });
         if (occupied >= room.capacity && member?.roomId !== roomId) {
           throw new ApiError(409, `${room.name} is already full.`);
         }
       }
       const result = await db
         .collection<MemberDocument>("members")
-        .updateOne({ id: memberId, messId }, { $set: { roomId } });
+        .updateOne({ id: memberId, messId, status: "active" }, { $set: { roomId } });
       if (!result.matchedCount) throw new ApiError(404, "That member no longer exists.");
     } else if (action === "inviteMember") {
       requireManager(role);
@@ -782,7 +1057,7 @@ export async function POST(request: Request) {
         if (!room) throw new ApiError(404, "That room no longer exists.");
         const occupied = await db
           .collection<MemberDocument>("members")
-          .countDocuments({ messId, roomId: room.id });
+          .countDocuments({ messId, roomId: room.id, status: "active" });
         if (occupied >= room.capacity) throw new ApiError(409, `${room.name} is already full.`);
         roomId = room.id;
       }
@@ -791,7 +1066,19 @@ export async function POST(request: Request) {
         .collection<MemberDocument>("members")
         .updateOne(
           { id, messId },
-          { $set: { status: "active", roomId, joinedAt: todayInZone(settings.timezone) } },
+          {
+            $set: {
+              status: "active",
+              roomId,
+              joinedAt: pending.membershipPeriods?.length
+                ? pending.joinedAt
+                : todayInZone(settings.timezone),
+            },
+            $unset: { leftAt: "", requestedAt: "" },
+            $push: {
+              membershipPeriods: { from: todayInZone(settings.timezone), to: null },
+            },
+          },
         );
       // Open the workspace for them wherever they are already signed in.
       if (pending.userId) {
@@ -807,7 +1094,14 @@ export async function POST(request: Request) {
         .collection<MemberDocument>("members")
         .findOne({ id, messId, status: "requested" });
       if (!pending) throw new ApiError(404, "That request no longer exists.");
-      await db.collection<MemberDocument>("members").deleteOne({ id, messId });
+      if (pending.membershipPeriods?.length) {
+        await db.collection<MemberDocument>("members").updateOne(
+          { id, messId },
+          { $set: { status: "former" }, $unset: { requestedAt: "" } },
+        );
+      } else {
+        await db.collection<MemberDocument>("members").deleteOne({ id, messId });
+      }
       await addActivity(db, messId, "Join request declined", `${user.name} declined ${pending.name}`, "coral");
     } else if (action === "setMemberRole") {
       requireManager(role);
@@ -854,7 +1148,14 @@ export async function POST(request: Request) {
       if (owes) {
         throw new ApiError(409, "Settle or remove their pending bazar entries first.");
       }
-      await db.collection<MemberDocument>("members").deleteOne({ id, messId });
+      if (member.status === "invited" || member.status === "requested") {
+        await db.collection<MemberDocument>("members").deleteOne({ id, messId });
+      } else {
+        await db.collection<MemberDocument>("members").updateOne(
+          { id, messId },
+          { $set: closedMembership(member, todayInZone(settings.timezone)) },
+        );
+      }
       if (member.userId) {
         await db
           .collection("sessions")
@@ -1125,6 +1426,12 @@ export async function POST(request: Request) {
           ["alternate", "daily", "weekly", "custom"] as const,
           "Roster frequency",
         ),
+        customRosterDays: Array.isArray(incoming.customRosterDays)
+          ? [...new Set(incoming.customRosterDays)]
+              .map(Number)
+              .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+              .slice(0, 7)
+          : [1, 3, 5],
         notifications: {
           cutoff: Boolean(incoming.notifications?.cutoff),
           roster: Boolean(incoming.notifications?.roster),
@@ -1140,6 +1447,9 @@ export async function POST(request: Request) {
       };
       if (!sanitized.mealTypes.breakfast && !sanitized.mealTypes.lunch && !sanitized.mealTypes.dinner) {
         throw new ApiError(400, "Keep at least one meal enabled.");
+      }
+      if (sanitized.rosterFrequency === "custom" && sanitized.customRosterDays.length === 0) {
+        throw new ApiError(400, "Choose at least one shopping day for the custom roster.");
       }
       await db
         .collection<MessDocument>("messes")

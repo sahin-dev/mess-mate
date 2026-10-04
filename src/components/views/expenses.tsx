@@ -6,16 +6,18 @@ import {
   FileText,
   Home,
   Lightbulb,
+  LockKeyhole,
   Plus,
   ReceiptText,
   Trash2,
+  UnlockKeyhole,
   Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { downloadCsv, formatDate, formatMoney, pluralize, signedMoney } from "@/lib/format";
 import { periodLabel } from "@/lib/period";
 import type { Expense } from "@/lib/types";
-import { Avatar, EmptyState, SectionHeading } from "@/components/ui";
+import { ActionButton, Avatar, EmptyState, Modal, SectionHeading } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace-context";
 
 const CATEGORY_ICON = {
@@ -37,11 +39,15 @@ const SLICE_COLORS = ["#c9603f", "#b08a3d", "#4c7f6c", "#3f6b80", "#6a66a0", "#8
 export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
   const { data, runAction, busy, isManager, confirm } = useWorkspace();
   const [category, setCategory] = useState("All");
+  const [reopening, setReopening] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
 
   const { settlement } = data;
   const rows = data.expenses.filter((expense) => category === "All" || expense.category === category);
   const total = settlement.bazarTotal + settlement.expenseTotal;
-  const activeMembers = data.members.filter((member) => member.status === "active");
+  const settlementIds = new Set(settlement.members.map((member) => member.memberId));
+  const settlementMembers = data.members.filter((member) => settlementIds.has(member.id));
+  const closed = data.closure.status === "closed";
 
   const exportLedger = () =>
     downloadCsv(`messmate-settlement-${data.period}.csv`, [
@@ -51,7 +57,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
       ["Approved bazar", settlement.bazarTotal, "Other bills", settlement.expenseTotal],
       [],
       ["Member", "Meals", "Meal cost", "Bills share", "Paid", "Balance"],
-      ...activeMembers.map((member) => [
+      ...settlementMembers.map((member) => [
         member.name,
         member.meals,
         member.mealCost,
@@ -85,6 +91,43 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
       },
     });
 
+  const closeMonth = () =>
+    confirm({
+      title: `Close ${periodLabel(data.period)}?`,
+      message:
+        "This freezes the meal rate, balances, and settle-up plan. Meals, bazar, and bills in this month cannot change until a manager reopens it.",
+      confirmLabel: "Close month",
+      onConfirm: async () => {
+        await runAction("closeMonth", { closePeriod: data.period }, "Month closed and settlement frozen.");
+      },
+    });
+
+  const reopenMonth = async () => {
+    const result = await runAction(
+      "reopenMonth",
+      { reopenPeriod: data.period, reason: reopenReason },
+      "Month reopened for corrections.",
+    );
+    if (result) {
+      setReopening(false);
+      setReopenReason("");
+    }
+  };
+
+  const generateFixedBills = () =>
+    confirm({
+      title: `Add fixed bills for ${periodLabel(data.period)}?`,
+      message: `${pluralize(data.settings.fixedExpenses.length, "saved bill")} will be added once. Bills already generated for this month are skipped automatically.`,
+      confirmLabel: "Add fixed bills",
+      onConfirm: async () => {
+        await runAction(
+          "generateFixedExpenses",
+          {},
+          "Fixed bills are up to date for this month.",
+        );
+      },
+    });
+
   return (
     <>
       <SectionHeading
@@ -93,12 +136,42 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
         description="Shared costs, each member's share, and what it takes to square up."
         action={
           isManager ? (
-            <button className="button button-coral" onClick={onAddExpense}>
-              <Plus size={17} aria-hidden="true" /> Add expense
-            </button>
+            <div className="view-actions">
+              {closed ? (
+                <button className="button button-outline" onClick={() => setReopening(true)}>
+                  <UnlockKeyhole size={16} aria-hidden="true" /> Reopen month
+                </button>
+              ) : (
+                <>
+                  {data.settings.fixedExpenses.length > 0 && (
+                    <button className="button button-outline" onClick={generateFixedBills} disabled={busy}>
+                      <ReceiptText size={16} aria-hidden="true" /> Add fixed bills
+                    </button>
+                  )}
+                  <button className="button button-outline" onClick={closeMonth} disabled={busy}>
+                    <LockKeyhole size={16} aria-hidden="true" /> Close month
+                  </button>
+                </>
+              )}
+              <button className="button button-coral" onClick={onAddExpense} disabled={closed}>
+                <Plus size={17} aria-hidden="true" /> Add expense
+              </button>
+            </div>
           ) : undefined
         }
       />
+
+      <section className={`month-state-banner ${closed ? "closed" : "open"}`}>
+        <LockKeyhole size={18} aria-hidden="true" />
+        <div>
+          <strong>{closed ? "Settlement frozen" : "Month is open"}</strong>
+          <span>
+            {closed
+              ? `Closed${data.closure.closedBy ? ` by ${data.closure.closedBy}` : ""}${data.closure.closedAt ? ` on ${formatDate(data.closure.closedAt)}` : ""}. Reopen it to make corrections.`
+              : "Balances update as approved bazar, meals, and bills change. Close the month when everything has been reviewed."}
+          </span>
+        </div>
+      </section>
 
       <section className="expense-hero">
         <div>
@@ -135,11 +208,11 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
             </button>
           </div>
 
-          {activeMembers.length === 0 ? (
+          {settlementMembers.length === 0 ? (
             <EmptyState title="No members yet" message="Invite housemates to start splitting costs." />
           ) : (
             <ul className="balance-list">
-              {activeMembers
+              {settlementMembers
                 .slice()
                 .sort((a, b) => b.balance - a.balance)
                 .map((member) => {
@@ -156,7 +229,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                       <div className="balance-bar" aria-hidden="true">
                         <span
                           className={member.balance >= 0 ? "credit" : "debt"}
-                          style={{ width: `${balanceWidth(member.balance, activeMembers)}%` }}
+                          style={{ width: `${balanceWidth(member.balance, settlementMembers)}%` }}
                         />
                       </div>
                       <strong
@@ -179,14 +252,45 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
               <>
                 <h4>To settle {periodLabel(data.period)}</h4>
                 <ul>
-                  {settlement.transfers.map((transfer) => (
-                    <li key={`${transfer.fromId}-${transfer.toId}`}>
-                      <span>{transfer.from}</span>
-                      <ArrowRight size={13} aria-hidden="true" />
-                      <span>{transfer.to}</span>
-                      <b>{formatMoney(transfer.amount)}</b>
-                    </li>
-                  ))}
+                  {settlement.transfers.map((transfer) => {
+                    const canUpdate =
+                      isManager ||
+                      transfer.fromId === data.workspace.userId ||
+                      transfer.toId === data.workspace.userId;
+                    const paid = transfer.paymentStatus === "paid";
+                    return (
+                      <li key={`${transfer.fromId}-${transfer.toId}-${transfer.amount}`} className={paid ? "paid" : ""}>
+                        <span>{transfer.from}</span>
+                        <ArrowRight size={13} aria-hidden="true" />
+                        <span>{transfer.to}</span>
+                        <b>{formatMoney(transfer.amount)}</b>
+                        {canUpdate ? (
+                          <ActionButton
+                            busy={busy}
+                            className={`payment-status-button ${paid ? "paid" : ""}`}
+                            title={paid ? "Mark this payment as pending again" : "Confirm this payment was made"}
+                            onClick={() =>
+                              runAction(
+                                paid ? "markSettlementUnpaid" : "markSettlementPaid",
+                                {
+                                  fromId: transfer.fromId,
+                                  toId: transfer.toId,
+                                  amount: transfer.amount,
+                                },
+                                paid ? "Payment marked pending." : "Payment marked paid.",
+                              )
+                            }
+                          >
+                            <Check size={13} aria-hidden="true" /> {paid ? "Paid" : "Mark paid"}
+                          </ActionButton>
+                        ) : (
+                          <span className={`status-pill ${paid ? "approved" : "pending"}`}>
+                            {paid ? "Paid" : "Pending"}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </>
             )}
@@ -224,7 +328,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                   : "Choose a different category to see more."
               }
               action={
-                isManager && data.expenses.length === 0 ? (
+                isManager && !closed && data.expenses.length === 0 ? (
                   <button className="button button-dark" onClick={onAddExpense}>
                     <Plus size={16} aria-hidden="true" /> Add the first bill
                   </button>
@@ -237,8 +341,8 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                 const Icon = CATEGORY_ICON[expense.category];
                 const share =
                   expense.splitMethod === "By room"
-                    ? "Split by room rent"
-                    : `${formatMoney(expense.amount / Math.max(1, activeMembers.length))} each`;
+                    ? `Split by room rent · ${pluralize(expense.shares?.length ?? 0, "member")}`
+                    : `${formatMoney(expense.amount / Math.max(1, expense.shares?.length ?? settlementMembers.length))} each`;
                 return (
                   <li className="expense-row" key={expense.id}>
                     <span className={`metric-icon ${CATEGORY_TONE[expense.category]}`} aria-hidden="true">
@@ -253,7 +357,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                     </div>
                     <span className="share-badge">{share}</span>
                     <strong className="expense-amount">{formatMoney(expense.amount)}</strong>
-                    {isManager ? (
+                    {isManager && !closed ? (
                       <button
                         type="button"
                         className="icon-action danger"
@@ -274,6 +378,40 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
           )}
         </section>
       </div>
+
+      {reopening && (
+        <Modal
+          title={`Reopen ${periodLabel(data.period)}`}
+          subtitle="The reason is kept in the month audit trail."
+          onClose={() => setReopening(false)}
+        >
+          <label className="field">
+            <span>Reason for reopening</span>
+            <textarea
+              value={reopenReason}
+              onChange={(event) => setReopenReason(event.target.value)}
+              maxLength={240}
+              rows={4}
+              placeholder="For example: electricity bill amount was corrected"
+              autoFocus
+            />
+          </label>
+          <div className="modal-actions">
+            <button className="button button-outline" onClick={() => setReopening(false)}>
+              Cancel
+            </button>
+            <ActionButton
+              className="button button-coral"
+              busy={busy}
+              busyLabel="Reopening…"
+              disabled={!reopenReason.trim()}
+              onClick={reopenMonth}
+            >
+              Reopen month
+            </ActionButton>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

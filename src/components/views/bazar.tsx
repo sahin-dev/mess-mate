@@ -4,6 +4,7 @@ import {
   CalendarDays,
   Check,
   ImageIcon,
+  LockKeyhole,
   PackageCheck,
   Plus,
   Search,
@@ -30,6 +31,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [receipt, setReceipt] = useState<BazarEntry | null>(null);
+  const closed = data.closure.status === "closed";
 
   const memberById = new Map(data.members.map((member) => [member.id, member]));
   const search = query.trim().toLowerCase();
@@ -75,11 +77,21 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
         title="Bazar ledger"
         description="Every grocery run, in one transparent place."
         action={
-          <button className="button button-coral" onClick={onAddBazar}>
+          <button className="button button-coral" onClick={onAddBazar} disabled={closed}>
             <Plus size={17} aria-hidden="true" /> Add bazar
           </button>
         }
       />
+
+      {closed && (
+        <section className="month-state-banner closed">
+          <LockKeyhole size={18} aria-hidden="true" />
+          <div>
+            <strong>Bazar ledger frozen</strong>
+            <span>This month is closed. A manager can reopen it from Expenses &amp; settlement.</span>
+          </div>
+        </section>
+      )}
 
       <section className="bazar-stats">
         <div>
@@ -164,7 +176,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
                   : "Try a different search or clear the status filter."
               }
               action={
-                data.bazar.length === 0 ? (
+                data.bazar.length === 0 && !closed ? (
                   <button className="button button-dark" onClick={onAddBazar}>
                     <Plus size={16} aria-hidden="true" /> Add bazar
                   </button>
@@ -198,7 +210,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
                     <strong className="ledger-amount">{formatMoney(entry.amount)}</strong>
                     <span className={`status-pill ${entry.status.toLowerCase()}`}>{entry.status}</span>
                     <div className="row-actions">
-                      {isManager && (
+                      {isManager && !closed && (
                         <ActionButton
                           busy={false}
                           className="icon-action"
@@ -227,7 +239,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
                           )}
                         </ActionButton>
                       )}
-                      {(isManager || mine) && (
+                      {(isManager || mine) && !closed && (
                         <button
                           type="button"
                           className="icon-action danger"

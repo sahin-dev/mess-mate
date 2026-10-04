@@ -41,6 +41,7 @@ export function MembersView() {
   const active = data.members.filter((member) => member.status === "active");
   const invited = data.members.filter((member) => member.status === "invited");
   const requests = data.members.filter((member) => member.status === "requested");
+  const former = data.members.filter((member) => member.status === "former");
   const me = data.members.find((member) => member.id === data.workspace.userId);
   const [approving, setApproving] = useState<Member | null>(null);
 
@@ -60,7 +61,7 @@ export function MembersView() {
     confirm({
       title: `Leave ${data.workspace.messName}?`,
       message:
-        "You lose access to this mess straight away. Your past meals and bazar entries stay in its records, but you will no longer appear in the split. You can ask to join again later.",
+        "You lose access straight away. Your membership end date, past meals, payments, and settlement history remain intact. You can ask to join again later.",
       confirmLabel: "Leave this mess",
       tone: "danger",
       onConfirm: async () => {
@@ -86,7 +87,7 @@ export function MembersView() {
       message:
         member.status === "invited"
           ? `The invitation for ${member.email} will be cancelled.`
-          : `${member.name} loses access to this mess. Their past meals and bazar entries stay in the records, but they will no longer be part of the split.`,
+          : `${member.name} loses access now. Their membership end date and all historical balances remain in the ledger.`,
       confirmLabel: "Remove",
       tone: "danger",
       onConfirm: async () => {
@@ -114,7 +115,7 @@ export function MembersView() {
       <SectionHeading
         kicker={data.workspace.messName.toUpperCase()}
         title="Mess members"
-        description={`${pluralize(active.length, "active member")}${invited.length ? ` and ${pluralize(invited.length, "pending invitation")}` : ""}.`}
+        description={`${pluralize(active.length, "active member")}${invited.length ? `, ${pluralize(invited.length, "pending invitation")}` : ""}${former.length ? `, and ${pluralize(former.length, "former member")}` : ""}.`}
         action={
           isManager ? (
             <button className="button button-coral" onClick={() => setInviting(true)}>
@@ -250,7 +251,9 @@ export function MembersView() {
                       {member.phone && <small className="member-phone">{member.phone}</small>}
                     </span>
                   </div>
-                  <span className={`role-badge ${member.role.toLowerCase()}`}>{member.role}</span>
+                  <span className={`role-badge ${member.status === "former" ? "former" : member.role.toLowerCase()}`}>
+                    {member.status === "former" ? "Former" : member.role}
+                  </span>
                   <span className="cell-muted">{member.room}</span>
                   <span className="cell-muted">
                     {member.status === "invited" ? "—" : member.meals}
@@ -276,6 +279,8 @@ export function MembersView() {
                   <span className="cell-muted">
                     {member.status === "invited"
                       ? "Invited"
+                      : member.status === "former" && member.leftAt
+                        ? `Left ${formatDate(member.leftAt, { month: "short", year: "numeric" })}`
                       : formatDate(member.joinedAt, { month: "short", year: "numeric" })}
                   </span>
                   <div className="row-actions">
@@ -301,7 +306,7 @@ export function MembersView() {
                         <ShieldCheck size={16} aria-hidden="true" />
                       </button>
                     )}
-                    {isManager && (
+                    {isManager && member.status !== "former" && (
                       <button
                         type="button"
                         className="icon-action danger"

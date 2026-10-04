@@ -49,6 +49,9 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
   const pending = data.bazar.filter((entry) => entry.status === "Pending");
   const joinRequests = data.members.filter((member) => member.status === "requested");
   const pendingListings = data.listings.filter((listing) => listing.status === "pending");
+  const pendingMeals = Object.values(data.memberMeals)
+    .flat()
+    .filter((entry) => entry.status === "Pending");
   const ownPending = pending.filter((entry) => entry.memberId === workspace.userId);
   const today = todayInZone(timeZone);
   const hasTodayEntry = data.meals.some((entry) => entry.date === today);
@@ -56,8 +59,10 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
     isManager ||
     data.settings.allowAnytime ||
     !cutoffHasPassed(timeZone, data.settings.cutoff, new Date(loadedAt));
-  const attentionCount = pending.length + joinRequests.length + pendingListings.length;
-  const attentionHref = pending.length
+  const attentionCount = pending.length + pendingMeals.length + joinRequests.length + pendingListings.length;
+  const attentionHref = pendingMeals.length
+    ? "/meals"
+    : pending.length
     ? "/bazar"
     : joinRequests.length
       ? "/members"
@@ -85,6 +90,7 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
         canEditToday={canEditToday}
         ownPendingCount={ownPending.length}
         pendingBazarCount={pending.length}
+        pendingMealCount={pendingMeals.length}
         joinRequestCount={joinRequests.length}
         pendingListingCount={pendingListings.length}
         onAddExpense={onAddExpense}
@@ -94,6 +100,7 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
         <ManagerInbox
           pendingBazarCount={pending.length}
           pendingBazarTotal={settlement.pendingBazarTotal}
+          pendingMealCount={pendingMeals.length}
           joinRequestCount={joinRequests.length}
           pendingListingCount={pendingListings.length}
         />
@@ -237,6 +244,7 @@ function PeriodStrip({
   canEditToday,
   ownPendingCount,
   pendingBazarCount,
+  pendingMealCount,
   joinRequestCount,
   pendingListingCount,
   onAddExpense,
@@ -248,15 +256,19 @@ function PeriodStrip({
   canEditToday: boolean;
   ownPendingCount: number;
   pendingBazarCount: number;
+  pendingMealCount: number;
   joinRequestCount: number;
   pendingListingCount: number;
   onAddExpense: () => void;
 }) {
   const { data } = useWorkspace();
   const periodHref = usePeriodHref();
-  const attentionCount = pendingBazarCount + joinRequestCount + pendingListingCount;
-  const headline = !isCurrentPeriod
+  const attentionCount = pendingBazarCount + pendingMealCount + joinRequestCount + pendingListingCount;
+  const closed = data.closure.status === "closed";
+  const headline = closed
     ? `${periodLabel(data.period)} is closed.`
+    : !isCurrentPeriod
+      ? `${periodLabel(data.period)} is still open.`
     : isManager
       ? attentionCount > 0
         ? `${pluralize(attentionCount, "task")} ${attentionCount === 1 ? "needs" : "need"} your attention.`
@@ -268,10 +280,14 @@ function PeriodStrip({
         : ownPendingCount > 0
           ? `${pluralize(ownPendingCount, "bazar entry", "bazar entries")} waiting for approval.`
           : "You’re all set for today.";
-  const detail = !isCurrentPeriod
-    ? "You are looking at a past month. Figures no longer change."
+  const detail = closed
+    ? `The settlement is frozen${data.closure.closedBy ? ` by ${data.closure.closedBy}` : ""}.`
+    : !isCurrentPeriod
+      ? isManager
+        ? "Review the figures, then close the month to prevent later changes."
+        : "A manager can still correct entries and close this month."
     : isManager && attentionCount > 0
-      ? `${managerAttentionSummary(pendingBazarCount, joinRequestCount, pendingListingCount)}. ${pluralize(daysLeft, "day")} left this month.`
+      ? `${managerAttentionSummary(pendingBazarCount, pendingMealCount, joinRequestCount, pendingListingCount)}. ${pluralize(daysLeft, "day")} left this month.`
       : !isManager && !hasTodayEntry && canEditToday
         ? `Meal entry closes at ${data.settings.cutoff}. ${pluralize(daysLeft, "day")} left this month.`
         : !isManager && !hasTodayEntry
@@ -288,7 +304,7 @@ function PeriodStrip({
         <p>{detail}</p>
       </div>
       <div className="strip-actions">
-        {isCurrentPeriod && !isManager && (
+        {isCurrentPeriod && !isManager && !closed && (
           <Link className="button button-light" href={periodHref("/meals")}>
             {hasTodayEntry ? "Update meals" : canEditToday ? "Plan my meals" : "View meal plan"}
           </Link>
@@ -296,7 +312,7 @@ function PeriodStrip({
         <Link className="button button-light" href={periodHref("/expenses")}>
           {isManager ? "View report" : "View my balance"}
         </Link>
-        {isCurrentPeriod && isManager && (
+        {isCurrentPeriod && isManager && !closed && (
           <button className="button button-coral" onClick={onAddExpense}>
             <Plus size={17} aria-hidden="true" /> Add expense
           </button>
@@ -309,17 +325,29 @@ function PeriodStrip({
 function ManagerInbox({
   pendingBazarCount,
   pendingBazarTotal,
+  pendingMealCount,
   joinRequestCount,
   pendingListingCount,
 }: {
   pendingBazarCount: number;
   pendingBazarTotal: number;
+  pendingMealCount: number;
   joinRequestCount: number;
   pendingListingCount: number;
 }) {
   const periodHref = usePeriodHref();
-  const total = pendingBazarCount + joinRequestCount + pendingListingCount;
+  const total = pendingBazarCount + pendingMealCount + joinRequestCount + pendingListingCount;
   const items = [
+    pendingMealCount > 0
+      ? {
+          href: "/meals",
+          label: "Meal approvals",
+          value: pluralize(pendingMealCount, "entry", "entries"),
+          detail: "Review these before calculating the final meal rate",
+          icon: Utensils,
+          tone: "green",
+        }
+      : null,
     pendingBazarCount > 0
       ? {
           href: "/bazar",
@@ -386,9 +414,10 @@ function ManagerInbox({
   );
 }
 
-function managerAttentionSummary(bazar: number, members: number, listings: number) {
+function managerAttentionSummary(bazar: number, meals: number, members: number, listings: number) {
   return [
     bazar ? pluralize(bazar, "bazar approval") : "",
+    meals ? pluralize(meals, "meal approval") : "",
     members ? pluralize(members, "join request") : "",
     listings ? pluralize(listings, "listing review") : "",
   ]

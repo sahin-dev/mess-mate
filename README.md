@@ -14,8 +14,10 @@ For a given month:
 
 - **Meal rate** = approved bazar total ÷ every member's meals.
   A member who eats more pays more.
-- **Bills** are split either equally between active members, or in proportion to
-  each member's share of the rent ("By room").
+- **Bills** are split between the members present on the bill date, either
+  equally or in proportion to each member's share of the rent ("By room"). The
+  exact allocation is saved with the bill, so later room or roster changes do
+  not rewrite it.
 - Whoever submitted a bazar entry, or was recorded as paying a bill, is credited
   with having paid it.
 - **Balance** = what a member paid − (their meals × the rate) − their share of the
@@ -23,6 +25,17 @@ For a given month:
 
 Balances always sum to zero, and the app reduces them to the shortest list of
 payments that settles the month.
+
+Managers close a reviewed month from `/expenses`. Closing stores an immutable
+settlement snapshot and locks its meals, bazar and bills. Reopening requires a
+reason and both actions remain in the activity/audit history. Leaving members
+are retained as dated former memberships, which keeps them in the periods where
+they actually lived in the house. Settle-up transfers can be marked paid by the
+payer, recipient or a manager.
+
+When meal approval is enabled, pending and rejected changes stay out of the
+meal rate until a manager approves them. A month cannot close while either meal
+or bazar approvals remain unresolved.
 
 The private **My money** ledger uses the member's economic share rather than
 the full amount they happened to pay up front. Their meal cost and share of

@@ -6,6 +6,7 @@ import {
   type MealDocument,
   type MemberDocument,
   type RoomDocument,
+  type SettlementClosureDocument,
 } from "@/lib/data";
 import {
   cutoffReminderEmail,
@@ -41,7 +42,8 @@ type NotificationLog = {
   key: string;
   messId: string;
   kind: NotificationKind;
-  sentAt: Date;
+  claimedAt: Date;
+  sentAt?: Date;
   expiresAt: Date;
 };
 
@@ -64,13 +66,13 @@ async function claim(db: Db, messId: string, kind: NotificationKind, scope: stri
       key,
       messId,
       kind,
-      sentAt: new Date(),
+      claimedAt: new Date(),
       // Kept for 60 days so the log cannot grow without bound.
       expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60_000),
     });
-    return true;
+    return key;
   } catch {
-    return false; // Duplicate key: already sent.
+    return null; // Duplicate key: sent already or claimed by another worker.
   }
 }
 
@@ -117,7 +119,7 @@ export async function runNotifications(db: Db, at = new Date()): Promise<Notific
     const today = todayInZone(settings.timezone, at);
     const { day: dayOfMonth } = zonedParts(settings.timezone, at);
 
-    const messages: { message: MailMessage; kind: NotificationKind }[] = [];
+    const messages: { message: MailMessage; kind: NotificationKind; claimKey: string }[] = [];
 
     // 1. The hour before the cutoff, to whoever has not recorded today.
     if (settings.notifications.cutoff && !settings.allowAnytime) {
@@ -137,9 +139,11 @@ export async function runNotifications(db: Db, at = new Date()): Promise<Notific
           // Only chase the people who have not entered anything; telling
           // everyone every evening is how reminders get filtered to spam.
           if (recorded.has(member.id)) continue;
-          if (!(await claim(db, mess.id, "cutoff", today, member.id))) continue;
+          const claimKey = await claim(db, mess.id, "cutoff", today, member.id);
+          if (!claimKey) continue;
           messages.push({
             kind: "cutoff",
+            claimKey,
             message: cutoffReminderEmail({
               to: member.email,
               name: member.name,
@@ -154,14 +158,23 @@ export async function runNotifications(db: Db, at = new Date()): Promise<Notific
 
     // 2. Whoever is on bazar duty tomorrow, told during the day before.
     if (settings.notifications.roster && localMinutes >= 9 * 60 && localMinutes < 21 * 60) {
-      const roster = buildRoster(members, settings.rosterFrequency, settings.timezone, at);
+      const roster = buildRoster(
+        members,
+        settings.rosterFrequency,
+        settings.timezone,
+        at,
+        6,
+        settings.customRosterDays,
+      );
       const tomorrow = addDays(today, 1);
       for (const slot of roster.filter((entry) => entry.date === tomorrow)) {
         const member = reachable.find((entry) => entry.id === slot.memberId);
         if (!member) continue;
-        if (!(await claim(db, mess.id, "roster", tomorrow, member.id))) continue;
+        const claimKey = await claim(db, mess.id, "roster", tomorrow, member.id);
+        if (!claimKey) continue;
         messages.push({
           kind: "roster",
+          claimKey,
           message: rosterReminderEmail({
             to: member.email,
             name: member.name,
@@ -180,9 +193,11 @@ export async function runNotifications(db: Db, at = new Date()): Promise<Notific
         for (const member of reachable) {
           const position = summary.settlement.members.find((entry) => entry.memberId === member.id);
           if (!position) continue;
-          if (!(await claim(db, mess.id, "settlement", closed, member.id))) continue;
+          const claimKey = await claim(db, mess.id, "settlement", closed, member.id);
+          if (!claimKey) continue;
           messages.push({
             kind: "settlement",
+            claimKey,
             message: settlementEmail({
               to: member.email,
               name: member.name,
@@ -206,7 +221,19 @@ export async function runNotifications(db: Db, at = new Date()): Promise<Notific
     if (!messages.length) continue;
     const outcome = await sendMailBatch(messages.map((entry) => entry.message));
     run.failed += outcome.failed;
-    for (const entry of messages) run[entry.kind] += 1;
+    await Promise.all(
+      messages.map(async (entry, index) => {
+        if (outcome.results[index]?.ok) {
+          run[entry.kind] += 1;
+          await db
+            .collection<NotificationLog>("notificationLog")
+            .updateOne({ key: entry.claimKey }, { $set: { sentAt: new Date() } });
+        } else {
+          // Release failed deliveries so the next scheduled run can retry.
+          await db.collection<NotificationLog>("notificationLog").deleteOne({ key: entry.claimKey });
+        }
+      }),
+    );
   }
 
   return run;
@@ -214,6 +241,10 @@ export async function runNotifications(db: Db, at = new Date()): Promise<Notific
 
 /** Recomputes a closed month so the email quotes the same figures as the app. */
 async function summarise(db: Db, messId: string, period: string) {
+  const closure = await db
+    .collection<SettlementClosureDocument>("settlementClosures")
+    .findOne({ messId, period, status: "closed" });
+  if (closure) return { settlement: closure.settlement };
   const range = { $gte: `${period}-01`, $lte: `${period}-31` };
   const [members, rooms, meals, expenses, bazar] = await Promise.all([
     db.collection<MemberDocument>("members").find({ messId }).toArray(),

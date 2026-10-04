@@ -10,13 +10,14 @@ import {
   Minus,
   Plus,
   UserCog,
+  X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { downloadCsv, formatDate, formatMoney, pluralize } from "@/lib/format";
 import { daysInPeriod, periodLabel } from "@/lib/period";
 import { cutoffHasPassed, periodInZone, timezoneOffsetLabel, todayInZone } from "@/lib/timezone";
 import type { MealKey } from "@/lib/types";
-import { ActionButton, EmptyState, SectionHeading } from "@/components/ui";
+import { ActionButton, Avatar, EmptyState, SectionHeading } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace-context";
 
 const ALL_KEYS: MealKey[] = ["breakfast", "lunch", "dinner"];
@@ -33,6 +34,12 @@ export function MealsView() {
 
   // Managers can fill in for someone who is away or does not use the app.
   const activeMembers = data.members.filter((member) => member.status === "active");
+  const membersById = new Map(data.members.map((member) => [member.id, member]));
+  const pendingMeals = Object.entries(data.memberMeals).flatMap(([memberId, entries]) =>
+    entries
+      .filter((entry) => entry.status === "Pending")
+      .map((entry) => ({ ...entry, memberId, member: membersById.get(memberId) })),
+  );
   const [subjectId, setSubjectId] = useState(data.workspace.userId);
   const subject =
     activeMembers.find((member) => member.id === subjectId) ??
@@ -86,6 +93,7 @@ export function MealsView() {
   const cutoffPassed = cutoffHasPassed(timeZone, data.settings.cutoff, new Date(mountedAt));
 
   const isLocked = (date: string) => {
+    if (data.closure.status === "closed") return true;
     if (isManager || data.settings.allowAnytime) return false;
     if (date > today) return false;
     if (date < today) return true;
@@ -153,7 +161,9 @@ export function MealsView() {
         kicker={periodLabel(data.period).toUpperCase()}
         title={recordingForSelf ? "My meal entries" : `${subject?.name}'s meal entries`}
         description={
-          data.settings.allowAnytime
+          data.closure.status === "closed"
+            ? "This month is closed and its meal counts are frozen."
+            : data.settings.allowAnytime
             ? "Entries stay open all month."
             : `Plan future days freely. Today closes at ${data.settings.cutoff} ${timezoneOffsetLabel(timeZone)}.`
         }
@@ -184,6 +194,64 @@ export function MealsView() {
           </>
         }
       />
+
+      {data.closure.status === "closed" && (
+        <section className="month-state-banner closed">
+          <Lock size={18} aria-hidden="true" />
+          <div>
+            <strong>Month closed</strong>
+            <span>The settlement is frozen. A manager can reopen it from Expenses &amp; settlement.</span>
+          </div>
+        </section>
+      )}
+
+      {isManager && pendingMeals.length > 0 && data.closure.status !== "closed" && (
+        <section className="panel request-panel meal-approval-panel">
+          <div className="table-toolbar">
+            <div>
+              <h3>{pluralize(pendingMeals.length, "meal entry")} awaiting review</h3>
+              <p>Only approved meal counts are included in the meal rate and settlement.</p>
+            </div>
+          </div>
+          <ul className="request-list">
+            {pendingMeals.map((entry) => {
+              const total = entry.breakfast + entry.lunch + entry.dinner;
+              return (
+                <li key={entry.id}>
+                  <Avatar
+                    name={entry.member?.name ?? "Member"}
+                    color={entry.member?.color ?? "#3f6b80"}
+                    avatarId={entry.member?.avatarId}
+                  />
+                  <div>
+                    <strong>{entry.member?.name ?? "Former member"}</strong>
+                    <small>{formatDate(entry.date)} · {pluralize(total, "meal")}</small>
+                  </div>
+                  <span className="cell-muted">
+                    B {entry.breakfast} · L {entry.lunch} · D {entry.dinner}
+                  </span>
+                  <div className="row-actions">
+                    <ActionButton
+                      busy={busy}
+                      className="button button-dark button-tiny"
+                      onClick={() => runAction("reviewMeal", { id: entry.id, status: "Open" }, "Meal entry approved.")}
+                    >
+                      <Check size={14} aria-hidden="true" /> Approve
+                    </ActionButton>
+                    <ActionButton
+                      busy={busy}
+                      className="button button-outline button-tiny"
+                      onClick={() => runAction("reviewMeal", { id: entry.id, status: "Rejected" }, "Meal entry rejected.")}
+                    >
+                      <X size={14} aria-hidden="true" /> Reject
+                    </ActionButton>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {isManager && activeMembers.length > 1 && (
         <div className={`subject-picker ${recordingForSelf ? "" : "on-behalf"}`}>
@@ -363,8 +431,12 @@ export function MealsView() {
 
       {data.period !== periodInZone(timeZone) && (
         <EmptyState
-          title="This is a past month"
-          message="Only a manager can still change entries for a month that has ended."
+          title={data.closure.status === "closed" ? "This month is closed" : "This is a past month"}
+          message={
+            data.closure.status === "closed"
+              ? "Its entries and settlement are frozen until a manager reopens it."
+              : "Members cannot edit past entries. A manager can correct them, then close the month."
+          }
         />
       )}
     </>

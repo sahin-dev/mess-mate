@@ -105,8 +105,10 @@ export type Member = {
   roomId: string | null;
   room: string;
   /** "requested" is a pending join request, awaiting a manager. */
-  status: "active" | "invited" | "requested";
+  status: "active" | "invited" | "requested" | "former";
   joinedAt: string;
+  /** Last day included in settlement, when this person has left the mess. */
+  leftAt?: string;
   color: string;
   /** Everything below is derived from the selected period, never stored. */
   meals: number;
@@ -243,7 +245,7 @@ export type Listing = {
 export type MealEntry = Record<MealKey, number> & {
   id: string;
   date: string;
-  status: "Open" | "Closed" | "Pending";
+  status: "Open" | "Closed" | "Pending" | "Rejected";
 };
 
 export type Expense = {
@@ -255,6 +257,8 @@ export type Expense = {
   splitMethod: SplitMethod;
   paidBy: string;
   paidById: string;
+  /** Allocation captured when the bill was created, so later roster changes cannot rewrite history. */
+  shares?: { memberId: string; amount: number }[];
 };
 
 export type BazarEntry = {
@@ -279,6 +283,8 @@ export type MessSettings = {
   bazarApproval: boolean;
   requireProof: boolean;
   rosterFrequency: "alternate" | "daily" | "weekly" | "custom";
+  /** JavaScript weekday numbers (0 Sunday through 6 Saturday) used by custom rotation. */
+  customRosterDays: number[];
   notifications: {
     cutoff: boolean;
     roster: boolean;
@@ -316,7 +322,22 @@ export type Settlement = {
   members: MemberSettlement[];
   byCategory: { label: string; amount: number }[];
   /** Who pays whom to close the month, fewest transfers first. */
-  transfers: { fromId: string; from: string; toId: string; to: string; amount: number }[];
+  transfers: {
+    fromId: string;
+    from: string;
+    toId: string;
+    to: string;
+    amount: number;
+    paymentStatus?: "pending" | "paid";
+    paidAt?: string;
+    paidBy?: string;
+  }[];
+};
+
+export type MonthClosure = {
+  status: "open" | "closed";
+  closedAt: string | null;
+  closedBy: string | null;
 };
 
 export type TrendPoint = {
@@ -345,6 +366,7 @@ export type WorkspaceData = {
   settings: MessSettings;
   activity: ActivityItem[];
   settlement: Settlement;
+  closure: MonthClosure;
   /** Private to the signed-in account; never shared with mess managers. */
   money: MoneyData;
   trend: TrendPoint[];

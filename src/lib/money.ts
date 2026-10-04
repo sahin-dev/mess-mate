@@ -1,4 +1,5 @@
 import type { Period } from "@/lib/period";
+import { allocateExpenseShares } from "@/lib/settlement";
 import type {
   MoneyAccount,
   MoneyBudget,
@@ -32,7 +33,15 @@ export type MoneyBudgetDocument = {
   updatedAt: string;
 };
 
-type MemberLike = { id: string; status: string; roomId: string | null };
+type MemberLike = {
+  id: string;
+  name: string;
+  status: string;
+  roomId: string | null;
+  joinedAt?: string;
+  leftAt?: string;
+  membershipPeriods?: { from: string; to: string | null }[];
+};
 type RoomLike = { id: string; rent: number };
 type ExpenseLike = {
   id: string;
@@ -40,6 +49,7 @@ type ExpenseLike = {
   date: string;
   amount: number;
   splitMethod: string;
+  shares?: { memberId: string; amount: number }[];
 };
 
 const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -55,23 +65,10 @@ export function expenseShareForMember(
   members: MemberLike[],
   rooms: RoomLike[],
 ) {
-  const active = members.filter((member) => member.status === "active");
-  const member = active.find((entry) => entry.id === memberId);
-  if (!member || active.length === 0) return 0;
-  if (expense.splitMethod !== "By room") return round2(expense.amount / active.length);
-
-  const rentByRoom = new Map(rooms.map((room) => [room.id, room.rent]));
-  const occupants = new Map<string, number>();
-  for (const entry of active) {
-    if (entry.roomId) occupants.set(entry.roomId, (occupants.get(entry.roomId) ?? 0) + 1);
-  }
-  const weightFor = (entry: MemberLike) => {
-    if (!entry.roomId) return 0;
-    return (rentByRoom.get(entry.roomId) ?? 0) / (occupants.get(entry.roomId) ?? 1);
-  };
-  const totalWeight = active.reduce((sum, entry) => sum + weightFor(entry), 0);
-  if (totalWeight <= 0) return round2(expense.amount / active.length);
-  return round2(expense.amount * (weightFor(member) / totalWeight));
+  const shares = expense.shares?.length
+    ? expense.shares
+    : allocateExpenseShares(expense, members, rooms);
+  return round2(shares.find((share) => share.memberId === memberId)?.amount ?? 0);
 }
 
 export function buildMoneyData(input: {

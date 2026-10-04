@@ -124,6 +124,7 @@ export async function sendMailBatch(messages: MailMessage[]) {
   return {
     sent: results.filter((result) => result.ok).length,
     failed: results.filter((result) => !result.ok).length,
+    results,
   };
 }
 
