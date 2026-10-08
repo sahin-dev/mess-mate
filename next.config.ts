@@ -11,7 +11,7 @@ const isDev = process.env.NODE_ENV !== "production";
  */
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""} https://pagead2.googlesyndication.com`,
   "style-src 'self' 'unsafe-inline'",
   // OpenStreetMap raster tiles power the location maps.
   "img-src 'self' data: blob: https://tile.openstreetmap.org https://*.tile.openstreetmap.org",
