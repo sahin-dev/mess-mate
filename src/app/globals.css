@@ -1073,6 +1073,83 @@ select:disabled {
 .manager-inbox-item-icon.blue { color: var(--blue-ink); background: var(--blue); }
 .manager-inbox-item-icon.sand { color: var(--sand-ink); background: var(--sand); }
 
+.month-command-card {
+  margin-top: 18px;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 1.5fr);
+  gap: 18px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.month-command-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.month-command-icon,
+.month-command-task-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius);
+  color: var(--sage-ink);
+  background: var(--sage);
+}
+
+.month-command-head h3 { margin: 5px 0 4px; font-size: var(--text-lg); }
+.month-command-head p { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
+
+.month-command-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.month-command-task {
+  min-width: 0;
+  min-height: 82px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: inherit;
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+.month-command-task:hover { border-color: var(--green-3); background: var(--sage); }
+.month-command-task.todo .month-command-task-icon { color: var(--coral-ink); background: var(--coral-soft); }
+.month-command-task.locked .month-command-task-icon { color: var(--muted); background: var(--line-soft); }
+.month-command-task.done .month-command-task-icon { color: var(--blue-ink); background: var(--blue); }
+
+.month-command-task > span:nth-child(2) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.month-command-task strong { font-size: var(--text-sm); }
+.month-command-task small { color: var(--muted); font-size: var(--text-xs); line-height: 1.45; }
+.month-command-task em {
+  grid-column: 2;
+  color: var(--green-2);
+  font-size: var(--text-xs);
+  font-style: normal;
+  font-weight: 800;
+}
+
 .metrics-grid {
   margin: 18px 0;
   display: grid;
@@ -1841,6 +1918,47 @@ select:disabled {
 .expense-legend b { color: #fff; font-variant-numeric: tabular-nums; }
 .legend-empty { grid-template-columns: 1fr; }
 
+.bill-policy-panel {
+  margin-bottom: 18px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.bill-policy-head {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.bill-policy-head h3 { margin: 5px 0 4px; font-size: var(--text-lg); }
+.bill-policy-head p { color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
+
+.bill-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.bill-policy-grid > div {
+  min-width: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.bill-policy-grid span { color: var(--muted); font-size: var(--text-xs); font-weight: 700; }
+.bill-policy-grid strong { font-family: var(--font-display); font-size: var(--text-xl); }
+.bill-policy-grid small { color: var(--muted); font-size: var(--text-xs); line-height: 1.45; }
+
 .settlement-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
@@ -1939,6 +2057,41 @@ select:disabled {
   font-size: var(--text-xs);
   white-space: nowrap;
 }
+
+.expense-share-detail {
+  grid-column: 2 / -1;
+  margin-top: -4px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.expense-share-detail > span { min-width: 0; }
+.expense-share-detail ul { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+.expense-share-detail li {
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.expense-share-detail li.mine {
+  color: var(--sage-ink);
+  background: var(--sage);
+}
+
+.expense-share-detail b { color: var(--ink); font-weight: 750; }
 
 /* --------------------------------------------------------------- money --- */
 
@@ -3623,7 +3776,9 @@ div.money-side-empty .button { width: max-content; }
   .strip-actions { width: 100%; }
   .strip-actions .button { flex: 1; }
   .manager-inbox { padding: 18px; }
+  .month-command-card { grid-template-columns: minmax(0, 1fr); padding: 18px; }
   .manager-inbox-list { grid-template-columns: minmax(0, 1fr); }
+  .month-command-list { grid-template-columns: minmax(0, 1fr); }
 
   .metrics-grid,
   .bazar-stats,
@@ -3644,6 +3799,8 @@ div.money-side-empty .button { width: max-content; }
   .summary-stat { min-width: 0; padding-left: 12px; }
 
   .expense-hero { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  .bill-policy-head { flex-direction: column; }
+  .bill-policy-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settlement-card,
   .expense-hero,
   .welcome-strip { padding: 20px; }
@@ -3656,6 +3813,7 @@ div.money-side-empty .button { width: max-content; }
 
   .expense-row { grid-template-columns: 44px minmax(0, 1fr) 100px 40px; }
   .share-badge { display: none; }
+  .expense-share-detail { grid-column: 1 / -1; }
 
   .balance-list li { grid-template-columns: 32px minmax(0, 1fr) 100px; }
   .balance-bar { display: none; }
@@ -3697,6 +3855,7 @@ div.money-side-empty .button { width: max-content; }
   .bazar-stats,
   .admin-metrics,
   .rent-summary,
+  .bill-policy-grid,
   .money-summary-grid,
   .money-side-stack,
   .personal-spend-summary { grid-template-columns: minmax(0, 1fr); }
@@ -3722,6 +3881,8 @@ div.money-side-empty .button { width: max-content; }
   .view-title-row .view-actions { width: 100%; }
   .table-toolbar { flex-direction: column; align-items: stretch; }
   .search-box { width: 100%; }
+  .expense-share-detail { flex-direction: column; align-items: flex-start; }
+  .expense-share-detail ul { justify-content: flex-start; }
 }
 
 /* Timezone picker ------------------------------------------------------- */

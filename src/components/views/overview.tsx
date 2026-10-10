@@ -109,6 +109,23 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
         />
       )}
 
+      <MonthCommandCenter
+        tasks={buildMonthTasks({
+          data,
+          isManager,
+          isCurrentPeriod,
+          hasTodayEntry,
+          canEditToday,
+          ownPendingCount: ownPending.length,
+          pendingBazarCount: pending.length,
+          pendingMealCount: pendingMeals.length,
+          joinRequestCount: joinRequests.length,
+          pendingListingCount: pendingListings.length,
+          daysLeft,
+          member: me,
+        })}
+      />
+
       {showSetup && <SetupChecklist tasks={setupTasks} />}
 
       <section className="metrics-grid" aria-label="Key figures">
@@ -565,6 +582,250 @@ function ManagerInbox({
       </div>
     </section>
   );
+}
+
+type MonthTask = {
+  label: string;
+  detail: string;
+  href: string;
+  cta: string;
+  state: "todo" | "ready" | "done" | "locked";
+  icon: typeof Utensils;
+};
+
+function MonthCommandCenter({ tasks }: { tasks: MonthTask[] }) {
+  const periodHref = usePeriodHref();
+  const openTasks = tasks.filter((task) => task.state === "todo").length;
+
+  return (
+    <section className="month-command-card" aria-labelledby="month-command-title">
+      <div className="month-command-head">
+        <span className="month-command-icon" aria-hidden="true">
+          <ClipboardCheck size={20} />
+        </span>
+        <div>
+          <span className="section-kicker">MONTH COMMAND CENTER</span>
+          <h3 id="month-command-title">
+            {openTasks > 0 ? `${pluralize(openTasks, "thing")} to handle next` : "The month is under control"}
+          </h3>
+          <p>Clear tasks first; the meal rate and balances stay easier to trust.</p>
+        </div>
+      </div>
+      <div className="month-command-list">
+        {tasks.slice(0, 4).map((task) => {
+          const Icon = task.icon;
+          return (
+            <Link
+              key={`${task.href}-${task.label}`}
+              className={`month-command-task ${task.state}`}
+              href={periodHref(task.href)}
+            >
+              <span className="month-command-task-icon" aria-hidden="true">
+                <Icon size={18} />
+              </span>
+              <span>
+                <strong>{task.label}</strong>
+                <small>{task.detail}</small>
+              </span>
+              <em>{task.cta}</em>
+            </Link>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function buildMonthTasks({
+  data,
+  isManager,
+  isCurrentPeriod,
+  hasTodayEntry,
+  canEditToday,
+  ownPendingCount,
+  pendingBazarCount,
+  pendingMealCount,
+  joinRequestCount,
+  pendingListingCount,
+  daysLeft,
+  member,
+}: {
+  data: WorkspaceData;
+  isManager: boolean;
+  isCurrentPeriod: boolean;
+  hasTodayEntry: boolean;
+  canEditToday: boolean;
+  ownPendingCount: number;
+  pendingBazarCount: number;
+  pendingMealCount: number;
+  joinRequestCount: number;
+  pendingListingCount: number;
+  daysLeft: number;
+  member: Member | undefined;
+}) {
+  const tasks: MonthTask[] = [];
+  const closed = data.closure.status === "closed";
+
+  if (closed) {
+    return [
+      {
+        label: `${periodLabel(data.period)} is closed`,
+        detail: "Meals, bazar, bills and balances are frozen for audit.",
+        href: "/expenses",
+        cta: "View report",
+        state: "locked" as const,
+        icon: Check,
+      },
+    ];
+  }
+
+  if (isManager) {
+    if (pendingMealCount > 0) {
+      tasks.push({
+        label: "Review meal changes",
+        detail: `${pluralize(pendingMealCount, "entry")} is outside the meal rate until approved.`,
+        href: "/meals",
+        cta: "Review",
+        state: "todo",
+        icon: Utensils,
+      });
+    }
+    if (pendingBazarCount > 0) {
+      tasks.push({
+        label: "Approve bazar entries",
+        detail: `${formatMoney(data.settlement.pendingBazarTotal)} is waiting before it can affect the meal rate.`,
+        href: "/bazar",
+        cta: "Approve",
+        state: "todo",
+        icon: ShoppingBasket,
+      });
+    }
+    if (joinRequestCount > 0) {
+      tasks.push({
+        label: "Add waiting members",
+        detail: `${pluralize(joinRequestCount, "join request")} needs a manager decision.`,
+        href: "/members",
+        cta: "Open",
+        state: "todo",
+        icon: UserPlus,
+      });
+    }
+    if (pendingListingCount > 0) {
+      tasks.push({
+        label: "Review room listings",
+        detail: `${pluralize(pendingListingCount, "post")} can become public after review.`,
+        href: "/house/listings",
+        cta: "Review",
+        state: "todo",
+        icon: Megaphone,
+      });
+    }
+    if (data.settlement.totalMeals === 0) {
+      tasks.push({
+        label: "Get meal counts in",
+        detail: "The meal rate cannot be calculated until members record meals.",
+        href: "/meals",
+        cta: "Open meals",
+        state: "ready",
+        icon: CookingPot,
+      });
+    }
+    if (data.settlement.bazarTotal === 0 && pendingBazarCount === 0) {
+      tasks.push({
+        label: "Add the first bazar run",
+        detail: "Approved bazar is the food pot that creates the meal rate.",
+        href: "/bazar",
+        cta: "Add bazar",
+        state: "ready",
+        icon: ShoppingBasket,
+      });
+    }
+    if (data.expenses.length === 0) {
+      tasks.push({
+        label: "Record shared bills",
+        detail: "Fixed and shared bills will appear in every member's monthly cost.",
+        href: "/expenses",
+        cta: "Add bill",
+        state: "ready",
+        icon: ReceiptText,
+      });
+    }
+    if (tasks.length === 0) {
+      tasks.push({
+        label: "Review and close the month",
+        detail: `${pluralize(daysLeft, "day")} left. Close only after meals, bazar and bills are checked.`,
+        href: "/expenses",
+        cta: "Review",
+        state: "done",
+        icon: Handshake,
+      });
+    }
+    return tasks;
+  }
+
+  const myTransfers = data.settlement.transfers.filter(
+    (transfer) =>
+      (transfer.fromId === data.workspace.userId || transfer.toId === data.workspace.userId) &&
+      transfer.paymentStatus !== "paid",
+  );
+
+  if (isCurrentPeriod && !hasTodayEntry) {
+    tasks.push({
+      label: canEditToday ? "Plan today's meals" : "Today's meals are closed",
+      detail: canEditToday
+        ? `Meal entry closes at ${data.settings.cutoff}.`
+        : "Ask a manager if today's count needs correcting.",
+      href: "/meals",
+      cta: canEditToday ? "Plan" : "View",
+      state: canEditToday ? "todo" : "locked",
+      icon: Utensils,
+    });
+  }
+  if (ownPendingCount > 0) {
+    tasks.push({
+      label: "Bazar waiting for approval",
+      detail: `${pluralize(ownPendingCount, "entry")} will count once a manager approves it.`,
+      href: "/bazar",
+      cta: "Track",
+      state: "ready",
+      icon: ShoppingBasket,
+    });
+  }
+  if (myTransfers.length > 0) {
+    tasks.push({
+      label: "Settle your month",
+      detail: `${pluralize(myTransfers.length, "payment")} involves you.`,
+      href: "/expenses",
+      cta: "Open",
+      state: "todo",
+      icon: Handshake,
+    });
+  }
+  if (member && Math.abs(member.balance) >= 1) {
+    tasks.push({
+      label: "Check your balance",
+      detail:
+        member.balance > 0
+          ? `The mess owes you ${formatMoney(member.balance)}.`
+          : `You owe ${formatMoney(Math.abs(member.balance))}.`,
+      href: "/expenses",
+      cta: "Details",
+      state: "ready",
+      icon: WalletCards,
+    });
+  }
+  if (tasks.length === 0) {
+    tasks.push({
+      label: "You're all set",
+      detail: `Meals, bazar and bills are visible for ${periodLabel(data.period)}.`,
+      href: "/expenses",
+      cta: "View report",
+      state: "done",
+      icon: Check,
+    });
+  }
+
+  return tasks;
 }
 
 function managerAttentionSummary(bazar: number, meals: number, members: number, listings: number) {

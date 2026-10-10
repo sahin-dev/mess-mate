@@ -13,12 +13,13 @@ import {
   UnlockKeyhole,
   Zap,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { downloadCsv, formatDate, formatMoney, pluralize, signedMoney } from "@/lib/format";
 import { periodLabel } from "@/lib/period";
 import type { Expense } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState, Modal, SectionHeading } from "@/components/ui";
-import { useWorkspace } from "@/components/workspace-context";
+import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
 const CATEGORY_ICON = {
   Fixed: Home,
@@ -47,7 +48,16 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
   const total = settlement.bazarTotal + settlement.expenseTotal;
   const settlementIds = new Set(settlement.members.map((member) => member.memberId));
   const settlementMembers = data.members.filter((member) => settlementIds.has(member.id));
+  const membersById = new Map(data.members.map((member) => [member.id, member]));
   const closed = data.closure.status === "closed";
+  const fixedExpenseTotal = data.expenses
+    .filter((expense) => expense.category === "Fixed")
+    .reduce((sum, expense) => sum + expense.amount, 0);
+  const sharedExpenseTotal = data.expenses
+    .filter((expense) => expense.category !== "Fixed")
+    .reduce((sum, expense) => sum + expense.amount, 0);
+  const myExpenseShare =
+    settlementMembers.find((member) => member.id === data.workspace.userId)?.expenseShare ?? 0;
 
   const exportLedger = () =>
     downloadCsv(`messmate-settlement-${data.period}.csv`, [
@@ -196,6 +206,14 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
         </ul>
       </section>
 
+      <BillPolicyPanel
+        fixedExpenseTotal={fixedExpenseTotal}
+        sharedExpenseTotal={sharedExpenseTotal}
+        myExpenseShare={myExpenseShare}
+        activeMemberCount={settlementMembers.length}
+        isManager={isManager}
+      />
+
       <div className="settlement-grid">
         <section className="panel balances-card">
           <div className="table-toolbar">
@@ -339,10 +357,12 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
             <ul className="expense-list">
               {rows.map((expense) => {
                 const Icon = CATEGORY_ICON[expense.category];
+                const shareCount = expense.shares?.length ?? settlementMembers.length;
+                const myShare = expense.shares?.find((share) => share.memberId === data.workspace.userId);
                 const share =
                   expense.splitMethod === "By room"
-                    ? `Split by room rent · ${pluralize(expense.shares?.length ?? 0, "member")}`
-                    : `${formatMoney(expense.amount / Math.max(1, expense.shares?.length ?? settlementMembers.length))} each`;
+                    ? `By room rent · ${pluralize(shareCount, "member")}`
+                    : `${formatMoney(expense.amount / Math.max(1, shareCount))} each`;
                 return (
                   <li className="expense-row" key={expense.id}>
                     <span className={`metric-icon ${CATEGORY_TONE[expense.category]}`} aria-hidden="true">
@@ -371,6 +391,12 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                     ) : (
                       <span />
                     )}
+                    <ExpenseShareDetail
+                      expense={expense}
+                      membersById={membersById}
+                      currentUserId={data.workspace.userId}
+                      myShare={myShare?.amount ?? 0}
+                    />
                   </li>
                 );
               })}
@@ -413,6 +439,107 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
         </Modal>
       )}
     </>
+  );
+}
+
+function BillPolicyPanel({
+  fixedExpenseTotal,
+  sharedExpenseTotal,
+  myExpenseShare,
+  activeMemberCount,
+  isManager,
+}: {
+  fixedExpenseTotal: number;
+  sharedExpenseTotal: number;
+  myExpenseShare: number;
+  activeMemberCount: number;
+  isManager: boolean;
+}) {
+  const { data } = useWorkspace();
+  const periodHref = usePeriodHref();
+  const fixedTemplateTotal = data.settings.fixedExpenses.reduce(
+    (sum, expense) => sum + expense.amount,
+    0,
+  );
+  const averageSharedShare = sharedExpenseTotal / Math.max(1, activeMemberCount);
+
+  return (
+    <section className="bill-policy-panel" aria-labelledby="bill-policy-title">
+      <div className="bill-policy-head">
+        <div>
+          <span className="section-kicker">BILL RULES</span>
+          <h3 id="bill-policy-title">Fixed and shared bills stay visible</h3>
+          <p>Templates are reusable; recorded bills are locked into the selected month.</p>
+        </div>
+        {isManager && (
+          <Link className="button button-outline button-tiny" href={periodHref("/settings")}>
+            Manage bill templates
+          </Link>
+        )}
+      </div>
+      <div className="bill-policy-grid">
+        <div>
+          <span>Saved fixed bills</span>
+          <strong>{formatMoney(fixedTemplateTotal)}</strong>
+          <small>{pluralize(data.settings.fixedExpenses.length, "template")} ready to generate monthly</small>
+        </div>
+        <div>
+          <span>Fixed this month</span>
+          <strong>{formatMoney(fixedExpenseTotal)}</strong>
+          <small>Rent and repeat bills recorded for {periodLabel(data.period)}</small>
+        </div>
+        <div>
+          <span>Shared this month</span>
+          <strong>{formatMoney(sharedExpenseTotal)}</strong>
+          <small>About {formatMoney(averageSharedShare)} per active member before room-based splits</small>
+        </div>
+        <div>
+          <span>Your bill share</span>
+          <strong>{formatMoney(myExpenseShare)}</strong>
+          <small>Only your allocated amount is added to your balance</small>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ExpenseShareDetail({
+  expense,
+  membersById,
+  currentUserId,
+  myShare,
+}: {
+  expense: Expense;
+  membersById: Map<string, { name: string }>;
+  currentUserId: string;
+  myShare: number;
+}) {
+  const shares = expense.shares ?? [];
+  if (shares.length === 0) return null;
+
+  const preview = shares.slice(0, 4);
+  const remaining = shares.length - preview.length;
+
+  return (
+    <div className="expense-share-detail">
+      <span>
+        {expense.splitMethod === "By room" ? "Room-weighted split" : "Equal split"}
+        {myShare > 0 ? ` · your share ${formatMoney(myShare)}` : ""}
+      </span>
+      <ul>
+        {preview.map((share) => {
+          const member = membersById.get(share.memberId);
+          const mine = share.memberId === currentUserId;
+          return (
+            <li key={share.memberId} className={mine ? "mine" : ""}>
+              {mine ? "You" : member?.name.split(" ")[0] ?? "Member"}
+              <b>{formatMoney(share.amount)}</b>
+            </li>
+          );
+        })}
+        {remaining > 0 && <li>+{remaining} more</li>}
+      </ul>
+    </div>
   );
 }
 
