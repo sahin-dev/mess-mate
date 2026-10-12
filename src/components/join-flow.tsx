@@ -29,15 +29,17 @@ export function JoinFlow({
   listings,
   areas,
   searching,
+  initialCode,
 }: {
   userName: string;
   pending: PendingRequest | null;
   listings: PublicListingCard[];
   areas: { area: string; count: number }[];
   searching: boolean;
+  initialCode: string | null;
 }) {
   const router = useRouter();
-  const [stage, setStage] = useState<Stage>(pending ? "pending" : "find");
+  const [stage, setStage] = useState<Stage>(pending ? "pending" : initialCode ? "join" : "find");
   const [request, setRequest] = useState<PendingRequest | null>(pending);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -45,7 +47,7 @@ export function JoinFlow({
   const [messName, setMessName] = useState("");
   const [location, setLocation] = useState("");
   const [memberCount, setMemberCount] = useState("5");
-  const [joinInput, setJoinInput] = useState("");
+  const [joinInput, setJoinInput] = useState(initialCode ?? "");
   const [createdCode, setCreatedCode] = useState("");
 
   const run = async <T,>(callback: () => Promise<T>) => {
@@ -101,7 +103,7 @@ export function JoinFlow({
       ),
     );
     if (!result) return;
-    // An invitation lets you straight in; anything else waits for a manager.
+    // An existing active member may reopen their workspace; new joins wait.
     if (result.status === "joined") {
       enterWorkspace();
       return;
@@ -295,8 +297,7 @@ export function JoinFlow({
           <p>
             Your mess manager can find it under Members. It looks like{" "}
             <strong>SHAPLA-7K4M</strong>. Entering it sends a request that a
-            manager has to accept &mdash; unless they have already invited your
-            email, in which case you go straight in.
+            manager has to accept. An email invitation does not bypass review.
           </p>
           <form className="auth-form" onSubmit={joinMess}>
             <label>
@@ -387,8 +388,7 @@ export function JoinFlow({
           </div>
 
           <SecureNote>
-            In a hurry? Ask your manager to invite your email address instead
-            &mdash; an invitation lets you in without waiting.
+            Your manager can accept or decline this request from their Members page.
           </SecureNote>
         </div>
       )}
@@ -400,7 +400,7 @@ export function JoinFlow({
           </span>
           <span className="auth-kicker">MESS CREATED</span>
           <h1>{messName} is ready.</h1>
-          <p>Share this private code with your housemates so they can join.</p>
+          <p>Share this private code with your housemates so they can request to join.</p>
           <div className="created-code-card">
             <span>YOUR JOIN CODE</span>
             <strong>{createdCode}</strong>
@@ -410,7 +410,7 @@ export function JoinFlow({
             <LockKeyhole size={18} aria-hidden="true" />
             <span>
               <strong>Keep the code private.</strong> Anyone who has it can
-              join. You can generate a new one at any time from Mess settings.
+              request access. A manager must approve each request. You can generate a new code from Mess settings.
             </span>
           </p>
           <button

@@ -44,13 +44,19 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 
 type SettlementMember = SettlementInput["members"][number];
 
+function membershipWindows(member: SettlementMember) {
+  if (member.membershipPeriods?.length) return member.membershipPeriods;
+  // Invitation and request dates are not membership dates. A pending person
+  // must not enter a bill split or settlement before a manager accepts them.
+  if (member.status === "invited" || member.status === "requested") return [];
+  return member.joinedAt
+    ? [{ from: member.joinedAt.slice(0, 10), to: member.leftAt?.slice(0, 10) ?? null }]
+    : [];
+}
+
 /** Membership is evaluated on the transaction date, never from today's status. */
 export function memberActiveOn(member: SettlementMember, date: string) {
-  const periods = member.membershipPeriods?.length
-    ? member.membershipPeriods
-    : member.joinedAt
-      ? [{ from: member.joinedAt.slice(0, 10), to: member.leftAt?.slice(0, 10) ?? null }]
-      : [];
+  const periods = membershipWindows(member);
   if (periods.length) {
     return periods.some(({ from, to }) => from <= date && (!to || date <= to));
   }
@@ -64,11 +70,7 @@ export function memberActiveOn(member: SettlementMember, date: string) {
  */
 function mealCountsOn(member: SettlementMember, date: string) {
   if (!member.mealCountFrom) return memberActiveOn(member, date);
-  const periods = member.membershipPeriods?.length
-    ? member.membershipPeriods
-    : member.joinedAt
-      ? [{ from: member.joinedAt.slice(0, 10), to: member.leftAt?.slice(0, 10) ?? null }]
-      : [];
+  const periods = membershipWindows(member);
   if (!periods.length) return member.status === "active" && member.mealCountFrom <= date;
   const openPeriod = [...periods].reverse().find((period) => !period.to);
   return periods.some((period) => {
@@ -80,11 +82,7 @@ function mealCountsOn(member: SettlementMember, date: string) {
 function memberWasPresent(member: SettlementMember, period: Period) {
   const start = `${period}-01`;
   const end = `${period}-31`;
-  const periods = member.membershipPeriods?.length
-    ? member.membershipPeriods
-    : member.joinedAt
-      ? [{ from: member.joinedAt.slice(0, 10), to: member.leftAt?.slice(0, 10) ?? null }]
-      : [];
+  const periods = membershipWindows(member);
   if (periods.length) return periods.some(({ from, to }) => from <= end && (!to || to >= start));
   return member.status === "active";
 }

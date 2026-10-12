@@ -125,7 +125,7 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
               </span>
               <div>
                 <h3>Private join code</h3>
-                <p>Anyone with this code can join. Regenerating it disables the old one at once.</p>
+                <p>Anyone with this code can request to join. A manager must approve each request. Regenerating it disables the old code at once.</p>
               </div>
             </div>
             <div className="setting-row">

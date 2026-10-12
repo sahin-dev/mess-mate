@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { formatDate, formatMoney, pluralize, signedMoney } from "@/lib/format";
 import { periodLabel } from "@/lib/period";
 import type { Member } from "@/lib/types";
@@ -25,7 +25,7 @@ import {
   Modal,
   SectionHeading,
 } from "@/components/ui";
-import { useWorkspace } from "@/components/workspace-context";
+import { requestJson, useWorkspace } from "@/components/workspace-context";
 
 export function MembersView() {
   const router = useRouter();
@@ -59,6 +59,13 @@ export function MembersView() {
         await runAction("rejectMember", { id: member.id }, `${member.name} declined.`);
       },
     });
+
+  const resendInvite = async (member: Member) => {
+    const result = await runAction("resendInvitation", { id: member.id });
+    if (!result) return;
+    const status = result.members.find((entry) => entry.id === member.id)?.invitationDelivery;
+    notify(status === "sent" ? `Invitation email accepted for ${member.email}.` : "Email could not be sent. Share the code directly or retry later.", status === "sent" ? "success" : "error");
+  };
 
   const leave = () =>
     confirm({
@@ -176,16 +183,31 @@ export function MembersView() {
           </span>
           <div>
             <span>MESS JOIN CODE</span>
-            <h3>Let people join themselves</h3>
-            <p>
-              Anyone with this code can join your mess. Regenerate it from Mess settings if it
-              spreads too far.
-            </p>
+            <h3>Let people request access</h3>
+            <p>Anyone with this code can request to join. Only a manager can approve access. Regenerate it from Mess settings if it spreads too far.</p>
           </div>
           <div className="join-code-value">
             <strong>{data.workspace.joinCode}</strong>
             <CopyButton value={data.workspace.joinCode} />
           </div>
+        </section>
+      )}
+
+      {isManager && invited.length > 0 && (
+        <section className="panel request-panel">
+          <div className="table-toolbar">
+            <div><h3>{pluralize(invited.length, "invitation")} awaiting a request</h3><p>Invited people still need to use the code and receive manager approval.</p></div>
+          </div>
+          <ul className="request-list">
+            {invited.map((member) => <li key={member.id}>
+              <Avatar name={member.name} color={member.color} avatarId={member.avatarId} />
+              <div><strong>{member.name}</strong><small>{member.email}</small></div>
+              <span className="cell-muted">{member.invitationDelivery === "sent" ? "Email accepted" : member.invitationDelivery === "failed" ? "Email failed" : "Share code directly"}</span>
+              <div className="row-actions">
+                <button type="button" className="button button-outline button-tiny" disabled={busy} onClick={() => resendInvite(member)}>Retry email</button>
+              </div>
+            </li>)}
+          </ul>
         </section>
       )}
 
@@ -443,24 +465,65 @@ function MealCountDateModal({ member, onClose }: { member: Member; onClose: () =
 }
 
 function InviteModal({ onClose }: { onClose: () => void }) {
-  const { data, runAction, busy } = useWorkspace();
+  const { data, runAction, busy, notify } = useWorkspace();
   const [email, setEmail] = useState("");
   const [roomId, setRoomId] = useState("");
+  const [lookup, setLookup] = useState<{
+    email: string;
+    found: boolean;
+    name: string | null;
+    available: boolean;
+    reason: string | null;
+  } | null>(null);
+  const [looking, setLooking] = useState(false);
+  const [lookupError, setLookupError] = useState("");
+  const lookupSeq = useRef(0);
+
+  const searchAccount = async () => {
+    const current = ++lookupSeq.current;
+    setLooking(true);
+    setLookupError("");
+    try {
+      const result = await requestJson<NonNullable<typeof lookup>>(
+        `/api/members/lookup?email=${encodeURIComponent(email.trim())}`,
+      );
+      if (current === lookupSeq.current) setLookup(result);
+    } catch (error) {
+      if (current === lookupSeq.current) {
+        setLookup(null);
+        setLookupError(error instanceof Error ? error.message : "Account search failed. Try again.");
+      }
+    } finally {
+      if (current === lookupSeq.current) setLooking(false);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!lookup || lookup.email !== email.trim().toLowerCase() || !lookup.available) {
+      await searchAccount();
+      return;
+    }
     const result = await runAction(
       "inviteMember",
       { email, roomId: roomId || null },
-      data.emailEnabled ? "Invitation sent." : "Invitation saved.",
     );
-    if (result) onClose();
+    if (result) {
+      const delivery = result.members.find((member) => member.email === lookup.email)?.invitationDelivery;
+      notify(
+        delivery === "sent"
+          ? "Invitation email accepted. They can now request to join; you will approve the request."
+          : "Invitation saved, but email was not sent. Share the join code directly or retry from Members.",
+        delivery === "sent" ? "success" : "error",
+      );
+      onClose();
+    }
   };
 
   return (
     <Modal
       title="Invite a member"
-      subtitle="Reserve their place, then share the join code so they can sign up."
+      subtitle="Find an account by exact email, or invite an address for someone who will sign up."
       onClose={onClose}
     >
       <form onSubmit={submit}>
@@ -471,10 +534,25 @@ function InviteModal({ onClose }: { onClose: () => void }) {
             type="email"
             required
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              lookupSeq.current += 1;
+              setEmail(event.target.value);
+              setLookup(null);
+              setLookupError("");
+              setLooking(false);
+            }}
             placeholder="housemate@example.com"
           />
         </label>
+        <div className="invite-search-row">
+          <button type="button" className="button button-outline" disabled={looking || busy || !email.trim()} onClick={searchAccount}>
+            <Search size={15} aria-hidden="true" /> {looking ? "Searching..." : "Find account"}
+          </button>
+          {lookup && <span role="status" className={lookup.available ? "invite-lookup-ok" : "invite-lookup-unavailable"}>
+            {lookup.reason ?? (lookup.found ? `Found ${lookup.name}. Ready to invite.` : "No account yet. This email can still be invited.")}
+          </span>}
+        </div>
+        {lookupError && <p className="field-error" role="alert">{lookupError}</p>}
         <label>
           Room (optional)
           <select value={roomId} onChange={(event) => setRoomId(event.target.value)}>
@@ -489,26 +567,17 @@ function InviteModal({ onClose }: { onClose: () => void }) {
         <div className="invite-note">
           <KeyRound size={17} aria-hidden="true" />
           <p>
-            {data.emailEnabled ? (
-              <>
-                We will email them an invitation with the join code. Their invitation becomes an
-                active membership as soon as they sign up and use it.
-              </>
-            ) : (
-              <>
-                Email is not configured on this deployment, so nothing is sent. Share the join code{" "}
-                <strong>{data.workspace.joinCode}</strong> with them yourself &mdash; their
-                invitation becomes an active membership as soon as they use it.
-              </>
-            )}
+            {data.emailEnabled
+              ? "We will try to email the join link and show its send status. Using the code creates a request that you must approve."
+              : <>Email is not configured. Share code <strong>{data.workspace.joinCode}</strong> directly. The person still needs your approval.</>}
           </p>
         </div>
         <div className="modal-actions">
           <button type="button" className="button button-outline" onClick={onClose}>
             Cancel
           </button>
-          <ActionButton busy={busy} busyLabel="Saving…" type="submit">
-            Save invitation
+          <ActionButton busy={busy} busyLabel="Inviting…" type="submit" disabled={!lookup?.available || lookup.email !== email.trim().toLowerCase()}>
+            Invite email
           </ActionButton>
         </div>
       </form>
@@ -522,10 +591,11 @@ function InviteModal({ onClose }: { onClose: () => void }) {
  */
 function ApproveModal({ member, onClose }: { member: Member; onClose: () => void }) {
   const { data, runAction, busy } = useWorkspace();
-  const [roomId, setRoomId] = useState("");
-
-  const occupancy = (id: string) => data.members.filter((entry) => entry.roomId === id).length;
+  const occupancy = (id: string) => data.members.filter((entry) => entry.status === "active" && entry.roomId === id).length;
   const free = data.rooms.filter((room) => occupancy(room.id) < room.capacity);
+  const [roomId, setRoomId] = useState(
+    member.roomId && free.some((room) => room.id === member.roomId) ? member.roomId : "",
+  );
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

@@ -26,14 +26,17 @@ export default async function JoinPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const auth = await readSession();
-  if (!auth) redirect("/signin");
+  const params = await searchParams;
+  const inviteCode = /^[A-Za-z0-9-]{6,20}$/.test(params.code ?? "")
+    ? params.code!.toUpperCase()
+    : null;
+  if (!auth) redirect(inviteCode ? `/signin?code=${encodeURIComponent(inviteCode)}` : "/signin");
   if (auth.user.isAdmin) redirect("/admin");
   if (auth.session.activeMessId && auth.session.role) redirect("/dashboard");
 
   // A manager may have accepted since this session started.
   if (await adoptMembership(auth.db, auth.session, auth.user)) redirect("/dashboard");
 
-  const params = await searchParams;
   const pending = await pendingJoinRequest(auth.db, auth.user);
 
   let listings: PublicListingCard[] = [];
@@ -55,6 +58,7 @@ export default async function JoinPage({
       listings={listings}
       areas={areas}
       searching={isSearching(params)}
+      initialCode={inviteCode}
     />
   );
 }

@@ -2800,10 +2800,16 @@ div.money-side-empty .button { width: max-content; }
 }
 
 .invite-note svg,
+.invite-search-row svg,
 .create-summary svg,
 .join-safety svg,
 .code-warning svg,
 .secure-note svg { flex: 0 0 auto; margin-top: 2px; color: var(--green-3); }
+
+.invite-search-row { margin: -2px 0 14px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.invite-search-row > span { flex: 1 1 180px; font-size: var(--text-xs); line-height: 1.45; }
+.invite-lookup-ok { color: var(--sage-ink); }
+.invite-lookup-unavailable { color: var(--negative); }
 
 .item-fieldset { padding: 0; margin: 0; border: 0; }
 .item-fieldset legend { padding: 0 0 8px; font-size: var(--text-sm); font-weight: 650; }

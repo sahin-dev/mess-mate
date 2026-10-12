@@ -18,12 +18,13 @@ import {
 } from "@/lib/data";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import type { Db } from "mongodb";
 import { emailChangedEmail, invitationEmail } from "@/lib/email-templates";
 import { MAX_AVATAR_BYTES } from "@/lib/avatar";
 import { isDemoUser } from "@/lib/demo";
 import { mergeVisibility } from "@/lib/visibility";
 import { rateLimit } from "@/lib/rate-limit";
-import { sendMail } from "@/lib/mail";
+import { appUrlIsLocal, mailTransport, sendMail } from "@/lib/mail";
 import { isPeriod, type Period } from "@/lib/period";
 import { allocateExpenseShares, memberActiveOn } from "@/lib/settlement";
 import {
@@ -80,6 +81,8 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Invitation sends wait for a provider result so the manager sees the real status.
+export const maxDuration = 60;
 
 const roomAccents: Room["accent"][] = ["coral", "blue", "green", "gold"];
 /** A proof image is stored inline as a data URL; keep it well under the 16 MB document limit. */
@@ -105,6 +108,39 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[], fiel
 
 function periodFrom(value: unknown, timeZone = DEFAULT_TIMEZONE): Period {
   return isPeriod(value) ? value : periodInZone(timeZone);
+}
+
+async function deliverInvitation(
+  db: Db,
+  member: MemberDocument,
+  mess: MessDocument,
+  inviterName: string,
+) {
+  const transport = mailTransport();
+  let status: NonNullable<MemberDocument["invitationDelivery"]> = "unavailable";
+  const message = invitationEmail({
+    to: member.email,
+    messName: mess.name,
+    inviterName,
+    joinCode: mess.joinCode,
+    location: mess.location,
+  });
+  if (transport === "resend" || transport === "smtp") {
+    if (!appUrlIsLocal()) {
+      const result = await sendMail(message);
+      status = result.ok ? "sent" : "failed";
+    } else {
+      console.warn("[messmate] invitation email skipped: MESSMATE_APP_URL is not configured");
+    }
+  } else if (transport === "console") {
+    // Development logs show the exact link without pretending it was delivered.
+    await sendMail(message);
+  }
+  await db.collection<MemberDocument>("members").updateOne(
+    { id: member.id, messId: mess.id, status: "invited" },
+    { $set: { invitationDelivery: status, invitationAttemptedAt: new Date().toISOString() } },
+  );
+  return status;
 }
 
 /**
@@ -393,16 +429,20 @@ export async function POST(request: Request) {
       const mess = await db.collection<MessDocument>("messes").findOne({ joinCode });
       if (!mess) throw new ApiError(404, "No mess matches that join code. Check it with your manager.");
 
-      const existing = await db
-        .collection<MemberDocument>("members")
-        .findOne({ messId: mess.id, email: user.email });
+      const members = db.collection<MemberDocument>("members");
+      const existing =
+        (await members.findOne({ messId: mess.id, userId: user.id })) ??
+        (await members.findOne({ messId: mess.id, email: user.email }));
+      if (existing?.userId && existing.userId !== user.id) {
+        throw new ApiError(409, "This email is linked to another account in that mess. Ask a manager for help.");
+      }
 
       // Already a member: just open the workspace again.
       if (existing?.status === "active") {
+        if (existing.userId !== user.id) {
+          throw new ApiError(409, "Ask a manager to link your account to this membership.");
+        }
         const role: UserRole = existing.role === "Manager" ? "manager" : "member";
-        await db
-          .collection<MemberDocument>("members")
-          .updateOne({ id: existing.id, messId: mess.id }, { $set: { userId: user.id, name: user.name } });
         await setActiveWorkspace(db, session, mess.id, role);
         return Response.json({ status: "joined", messName: mess.name });
       }
@@ -417,8 +457,11 @@ export async function POST(request: Request) {
       }
 
       if (existing?.status === "former") {
-        await db.collection<MemberDocument>("members").updateOne(
-          { id: existing.id, messId: mess.id },
+        if (existing.membershipPeriods?.length && existing.id !== user.id) {
+          throw new ApiError(409, "Older records for this membership are linked to another account. Ask a manager for help.");
+        }
+        const result = await members.updateOne(
+          { id: existing.id, messId: mess.id, status: "former" },
           {
             $set: {
               userId: user.id,
@@ -429,17 +472,21 @@ export async function POST(request: Request) {
             },
           },
         );
+        if (!result.matchedCount) throw new ApiError(409, "That membership changed. Please try again.");
         await addActivity(db, mess.id, "Join request", `${user.name} asked to rejoin`, "blue");
         return Response.json({ status: "pending", messName: mess.name });
       }
 
-      // An invitation is the manager having already said yes, so it converts
-      // straight into membership rather than asking them again.
+      // Even an emailed invitation still requires the manager's final review.
+      // Link the verified account and preserve any historical membership.
       if (existing?.status === "invited") {
-        const joinedAt = todayInZone(
+        if (existing.membershipPeriods?.length && existing.id !== user.id) {
+          throw new ApiError(409, "This invitation has older records linked to another account. Ask a manager for help.");
+        }
+        const requestedAt = todayInZone(
           ((mess.settings as Partial<MessSettings> | undefined)?.timezone) ?? DEFAULT_TIMEZONE,
         );
-        await db.collection<MemberDocument>("members").updateOne(
+        const result = await members.updateOne(
           { id: existing.id, messId: mess.id, status: "invited" },
           {
             $set: {
@@ -447,34 +494,44 @@ export async function POST(request: Request) {
               userId: user.id,
               name: user.name,
               email: user.email,
-              status: "active",
-              joinedAt,
-              membershipPeriods: [{ from: joinedAt, to: null }],
+              role: "Member",
+              status: "requested",
+              requestedAt,
+              ...(!existing.membershipPeriods?.length ? { joinedAt: requestedAt } : {}),
             },
           },
         );
-        const role: UserRole = existing.role === "Manager" ? "manager" : "member";
-        await setActiveWorkspace(db, session, mess.id, role);
-        await addActivity(db, mess.id, "Member joined", `${user.name} accepted their invitation`, "green");
-        return Response.json({ status: "joined", messName: mess.name });
+        if (!result.matchedCount) throw new ApiError(409, "That invitation changed. Please try again.");
+        await addActivity(db, mess.id, "Join request", `${user.name} requested to join from an invitation`, "blue");
+        return Response.json({ status: "pending", messName: mess.name });
       }
 
       // Otherwise it is a request, and a manager decides.
       const memberCount = await db.collection("members").countDocuments({ messId: mess.id });
-      await db.collection<MemberDocument>("members").insertOne({
-        // The member id is the user id for any membership backed by an account:
-        // the settlement matches a member's meals by this id.
-        id: user.id,
-        messId: mess.id,
-        userId: user.id,
-        name: user.name,
-        email: user.email,
-        role: "Member",
-        roomId: null,
-        status: "requested",
-        joinedAt: todayInZone(DEFAULT_TIMEZONE),
-        color: MEMBER_COLORS[memberCount % MEMBER_COLORS.length],
-      });
+      try {
+        await members.insertOne({
+          // The member id is the user id for any membership backed by an account:
+          // the settlement matches a member's meals by this id.
+          id: user.id,
+          messId: mess.id,
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          role: "Member",
+          roomId: null,
+          status: "requested",
+          joinedAt: todayInZone(DEFAULT_TIMEZONE),
+          requestedAt: todayInZone(DEFAULT_TIMEZONE),
+          color: MEMBER_COLORS[memberCount % MEMBER_COLORS.length],
+        });
+      } catch (error) {
+        if (typeof error === "object" && error && "code" in error && error.code === 11000) {
+          const request = await members.findOne({ messId: mess.id, userId: user.id, status: "requested" });
+          if (request) return Response.json({ status: "pending", messName: mess.name });
+          throw new ApiError(409, "A membership for this account already exists. Refresh and try again.");
+        }
+        throw error;
+      }
       await addActivity(db, mess.id, "Join request", `${user.name} asked to join`, "blue");
       return Response.json({ status: "pending", messName: mess.name });
     }
@@ -1215,16 +1272,36 @@ export async function POST(request: Request) {
     } else if (action === "inviteMember") {
       requireManager(role);
       const email = cleanEmail(body.email);
-      if (await db.collection<MemberDocument>("members").findOne({ messId, email })) {
-        throw new ApiError(409, "That person is already a member or already invited.");
+      if (email === user.email) throw new ApiError(409, "You already belong to this mess.");
+      const account = await db.collection<UserDocument>("users").findOne({ email });
+      if (account?.id === user.id) throw new ApiError(409, "You already belong to this mess.");
+      if (account?.suspendedAt) throw new ApiError(409, "That account cannot be invited.");
+      if (account) await assertNoOtherActiveMess(db, account.id, messId);
+      const members = db.collection<MemberDocument>("members");
+      const previous = (account
+        ? await members.findOne({ messId, userId: account.id })
+        : null) ?? await members.findOne({ messId, email });
+      if (previous && previous.status !== "former") {
+        throw new ApiError(409, previous.status === "requested"
+          ? "This person already requested to join. Review their request above."
+          : "That person is already a member or already invited.");
+      }
+      if (previous?.userId && previous.userId !== account?.id) {
+        throw new ApiError(409, "This address belongs to a different historical account. Ask support to review it.");
+      }
+      if (previous?.membershipPeriods?.length && previous.id !== account?.id) {
+        throw new ApiError(409, "This historical membership cannot be relinked by email. Ask support to review it.");
       }
       const roomId = typeof body.roomId === "string" && body.roomId ? body.roomId : null;
+      if (roomId && !(await db.collection<RoomDocument>("rooms").findOne({ id: roomId, messId }))) {
+        throw new ApiError(404, "That room no longer exists.");
+      }
       const memberCount = await db.collection("members").countDocuments({ messId });
       const member: MemberDocument = {
-        id: newId("member"),
+        id: previous?.id ?? account?.id ?? newId("member"),
         messId,
-        userId: null,
-        name: email
+        userId: account?.id ?? null,
+        name: account?.name ?? email
           .split("@")[0]
           .replace(/[._-]/g, " ")
           .replace(/\b\w/g, (letter) => letter.toUpperCase()),
@@ -1232,27 +1309,39 @@ export async function POST(request: Request) {
         role: "Invited",
         roomId,
         status: "invited",
-        joinedAt: todayInZone(settings.timezone),
-        color: MEMBER_COLORS[memberCount % MEMBER_COLORS.length],
+        joinedAt: previous?.joinedAt ?? todayInZone(settings.timezone),
+        color: previous?.color ?? MEMBER_COLORS[memberCount % MEMBER_COLORS.length],
+        ...(previous?.membershipPeriods ? { membershipPeriods: previous.membershipPeriods } : {}),
       };
-      await db.collection<MemberDocument>("members").insertOne(member);
-      await addActivity(db, messId, "Member invited", `${user.name} invited ${email}`, "green");
-      // The invitation is already saved; sending happens after the response so
-      // a slow or failing mail server never blocks or undoes it.
-      after(async () => {
-        const result = await sendMail(
-          invitationEmail({
-            to: email,
-            messName: mess.name,
-            inviterName: user.name,
-            joinCode: mess.joinCode,
-            location: mess.location,
-          }),
+      if (previous) {
+        const result = await members.updateOne(
+          { id: previous.id, messId, status: "former" },
+          { $set: { userId: member.userId, name: member.name, email, role: "Invited", roomId, status: "invited" } },
         );
-        if (!result.ok) {
-          console.warn(`[messmate] invitation email to ${email} was not delivered: ${result.error}`);
+        if (!result.matchedCount) throw new ApiError(409, "That membership changed. Please try again.");
+      } else {
+        try {
+          await db.collection<MemberDocument>("members").insertOne(member);
+        } catch (error) {
+          if (typeof error === "object" && error && "code" in error && error.code === 11000) {
+            throw new ApiError(409, "That person is already a member or invited.");
+          }
+          throw error;
         }
-      });
+      }
+      await addActivity(db, messId, "Member invited", `${user.name} invited ${email}`, "green");
+      await deliverInvitation(db, member, mess, user.name);
+    } else if (action === "resendInvitation") {
+      requireManager(role);
+      const id = cleanString(body.id, "Invitation", 100);
+      const member = await db.collection<MemberDocument>("members").findOne({ id, messId, status: "invited" });
+      if (!member) throw new ApiError(404, "That invitation is no longer pending.");
+      const lastAttempt = member.invitationAttemptedAt ? Date.parse(member.invitationAttemptedAt) : 0;
+      if (Number.isFinite(lastAttempt) && Date.now() - lastAttempt < 30_000) {
+        throw new ApiError(429, "Wait 30 seconds before retrying this email.", { "Retry-After": "30" });
+      }
+      await deliverInvitation(db, member, mess, user.name);
+      await addActivity(db, messId, "Invitation retried", `${user.name} retried ${member.email}`, "blue");
     } else if (action === "approveMember") {
       requireManager(role);
       const id = cleanString(body.id, "Member", 100);
@@ -1283,10 +1372,10 @@ export async function POST(request: Request) {
         roomId = room.id;
       }
 
-      await db
+      const approved = await db
         .collection<MemberDocument>("members")
         .updateOne(
-          { id, messId },
+          { id, messId, status: "requested" },
           {
             $set: {
               status: "active",
@@ -1301,6 +1390,7 @@ export async function POST(request: Request) {
             },
           },
         );
+      if (!approved.matchedCount) throw new ApiError(409, "That request has already been reviewed.");
       // Open the workspace for them wherever they are already signed in.
       if (pending.userId) {
         await db

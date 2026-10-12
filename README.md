@@ -128,6 +128,7 @@ the rest of the app is served `noindex`.
 | ----------------- | -------------------------------------------------------------- |
 | `/api/auth`       | Session restore, sign up, sign in, demo, sign out               |
 | `/api/workspace`  | Month-scoped reads and every validated mutation                 |
+| `/api/members/lookup` | Manager-only exact email lookup for invitations            |
 | `/api/proof`      | Streams a bazar receipt to members of that mess only            |
 | `/api/admin`      | Admin console reads (`?view=`) and audited actions. Administrators only |
 | `/api/report`     | A visitor reports a public to-let post. Throttled, no sign-in   |
@@ -172,16 +173,20 @@ hold none at all, and where sign-in lands depends on which:
 
 ### Joining
 
-Entering a join code raises a **request**; it does not grant access. The
+Entering a join code always raises a **request** for a new member, including
+when the manager previously invited that email. It never grants access. The
 manager sees it at the top of `/members` and either accepts or rejects it.
 Accepting can assign a room in the same dialog. Until then the requester waits
-on `/join`, and may cancel.
+on `/join`, and may cancel. An existing active member with a stale session can
+still reopen their own workspace.
 
-An **invitation** is the opposite direction, so it needs no second approval: a
-person who signs in against an invited row joins immediately, and their
-membership id is re-keyed to their account id.
+A manager can search for an existing account by exact email before inviting it,
+or invite an email whose owner will sign up later. The invitation email links
+to a prefilled join request and preserves its code through sign-in. Delivery
+status is shown on `/members`, where the manager can retry or share the code
+directly. The account is linked to the request before it can be approved.
 
-> That re-keying matters. `computeSettlement()` attributes meals by
+> The account ID link matters. `computeSettlement()` attributes meals by
 > `member.id`, so for any account-backed membership `member.id` must equal
 > `user.id` &mdash; otherwise meals are recorded against a row nobody owns and
 > silently vanish from the rate.
@@ -363,9 +368,10 @@ Pick a transport in `.env`:
 | `smtp`    | When `SMTP_HOST` is set. Any SMTP server.        |
 | `disabled`| Default in production until one of these is set. |
 
-The app never claims to have sent something it could not: the invite dialog and
-the notification settings both change their wording when no transport is
-configured.
+Invitation email is sent during the invite request and its provider result is
+saved with the invitation. A failed send leaves the invitation available for
+retry; no join access is granted. Set `MESSMATE_APP_URL` when using a real mail
+transport, or invitation sending is skipped to avoid emailing localhost links.
 
 ### Scheduled reminders
 

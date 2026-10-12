@@ -112,6 +112,8 @@ export type Member = {
   room: string;
   /** "requested" is a pending join request, awaiting a manager. */
   status: "active" | "invited" | "requested" | "former";
+  /** Last attempt to email an invitation. Only relevant while invited. */
+  invitationDelivery?: "sent" | "failed" | "unavailable";
   joinedAt: string;
   /** First date whose meals count toward open settlements. */
   mealCountFrom: string;

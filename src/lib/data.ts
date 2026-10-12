@@ -53,6 +53,8 @@ export type MemberDocument = {
   role: Member["role"];
   roomId: string | null;
   status: Member["status"];
+  invitationDelivery?: Member["invitationDelivery"];
+  invitationAttemptedAt?: string;
   joinedAt: string;
   /** Overrides the current membership period's start for meal counting only. */
   mealCountFrom?: string;
@@ -379,7 +381,7 @@ export async function getWorkspaceData(
 
   // A member row belongs to the mess; the phone number and picture belong to
   // the person's own account, so they are read back through `userId`. An
-  // invited member has no account yet and simply has neither.
+  // an invited address may not have an account yet and then has neither.
   const linkedUserIds = memberDocs.map((member) => member.userId).filter((id): id is string => Boolean(id));
   const profiles = linkedUserIds.length
     ? await db
@@ -471,6 +473,7 @@ export async function getWorkspaceData(
       role: member.role,
       roomId: member.roomId,
       status: member.status,
+      invitationDelivery: member.invitationDelivery,
       joinedAt: member.joinedAt,
       mealCountFrom: member.mealCountFrom ?? currentMembership?.from ?? member.joinedAt.slice(0, 10),
       leftAt: member.leftAt,

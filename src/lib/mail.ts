@@ -52,9 +52,17 @@ export function appUrl(path = "/") {
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-/** True when every link in every email is going to point at the dev machine. */
+/** True when an outbound email cannot have a usable public link. */
 export function appUrlIsLocal() {
-  return !process.env.MESSMATE_APP_URL?.trim();
+  const configured = process.env.MESSMATE_APP_URL?.trim();
+  if (!configured) return true;
+  try {
+    const url = new URL(configured);
+    return !["http:", "https:"].includes(url.protocol) ||
+      ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  } catch {
+    return true;
+  }
 }
 
 let warnedAboutAppUrl = false;
@@ -73,15 +81,15 @@ function warnIfLinksAreLocal(transport: MailTransport) {
   if (!appUrlIsLocal()) return;
   warnedAboutAppUrl = true;
   console.warn(
-    `[messmate] MESSMATE_APP_URL is not set, so every link in outgoing email points at ${LOCAL_APP_URL}. ` +
-      "Invitations and password resets will not work for anyone but you. Set it to the address people actually use.",
+    "[messmate] MESSMATE_APP_URL is missing, invalid, or local. " +
+      "Links in outgoing email will not work for recipients. Set it to the public address people actually use.",
   );
 }
 
 /** True when mail actually leaves the server, so the UI can tell the truth. */
 export function mailIsDelivered() {
   const transport = mailTransport();
-  return transport === "resend" || transport === "smtp";
+  return (transport === "resend" || transport === "smtp") && !appUrlIsLocal();
 }
 
 export async function sendMail(message: MailMessage): Promise<MailResult> {
@@ -133,6 +141,7 @@ export async function sendMailBatch(messages: MailMessage[]) {
 async function sendViaResend(message: MailMessage) {
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
+    signal: AbortSignal.timeout(12_000),
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       "Content-Type": "application/json",

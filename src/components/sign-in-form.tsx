@@ -10,7 +10,7 @@ import { requestJson } from "@/components/workspace-context";
 
 type Mode = "signin" | "signup";
 
-export function SignInForm({ demoEnabled }: { demoEnabled: boolean }) {
+export function SignInForm({ demoEnabled, inviteCode }: { demoEnabled: boolean; inviteCode: string | null }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("signin");
   const [busy, setBusy] = useState(false);
@@ -21,7 +21,7 @@ export function SignInForm({ demoEnabled }: { demoEnabled: boolean }) {
 
   const go = (response: AuthResponse) => {
     // A brand-new account has no mess yet, so it goes to the join step.
-    router.replace(response.workspace ? "/dashboard" : "/join");
+    router.replace(response.workspace ? "/dashboard" : inviteCode ? `/join?code=${encodeURIComponent(inviteCode)}` : "/join");
     router.refresh();
   };
 

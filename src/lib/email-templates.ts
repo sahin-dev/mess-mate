@@ -63,8 +63,9 @@ export function invitationEmail(options: {
     "",
     `Join here: ${link}`,
     "",
-    "If you were not expecting this, you can ignore this email. Nothing happens",
-    "until you sign up and enter the code.",
+    "Sign in or create an account with this email address, then send a join",
+    "request using the code. A manager must approve it before you can enter.",
+    "If you were not expecting this, you can ignore this email.",
   ].join("\n");
 
   return {
@@ -77,9 +78,10 @@ export function invitationEmail(options: {
         `<strong>${escapeHtml(options.inviterName)}</strong> has invited you to join <strong>${escapeHtml(options.messName)}</strong>${escapeHtml(where)} on MessMate.`,
         "MessMate keeps a shared home's meals, grocery runs and bills in one place, and works out who owes whom at the end of the month.",
         `Your join code is <strong style="letter-spacing:1px;">${escapeHtml(options.joinCode)}</strong>.`,
-        "If you were not expecting this you can ignore this email — nothing happens until you sign up and enter the code.",
+        "Sign in or create an account with this email, then use the code to request access. A manager must approve your request.",
+        "If you were not expecting this, you can ignore this email.",
       ],
-      action: { label: "Join the mess", href: link },
+      action: { label: "Request to join", href: link },
     }),
   };
 }
