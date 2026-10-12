@@ -4,7 +4,7 @@ import type { Db } from "mongodb";
 import { periodShortLabel, shiftPeriod, type Period } from "@/lib/period";
 import { DEFAULT_TIMEZONE, normalizeTimezone, periodInZone, todayInZone } from "@/lib/timezone";
 import { mailIsDelivered } from "@/lib/mail";
-import { buildRoster, computeSettlement } from "@/lib/settlement";
+import { allocateExpenseShares, buildRoster, computeSettlement, memberActiveOn, reconcileCookedMeals } from "@/lib/settlement";
 import {
   buildMoneyData,
   type MoneyBudgetDocument,
@@ -16,6 +16,7 @@ import type {
   AnnouncementAudience,
   AnnouncementBanner,
   BazarEntry,
+  CookedMealEntry,
   ListingReportReason,
   Notice,
   Expense,
@@ -99,6 +100,7 @@ export type AvatarDocument = {
   createdAt: string;
 };
 export type MealDocument = MealEntry & { messId: string; userId: string };
+export type CookedMealDocument = CookedMealEntry & { messId: string };
 /** `createdBy` is the member who actually paid, which is what the settlement needs. */
 export type ExpenseDocument = Omit<Expense, "paidBy" | "paidById"> & {
   messId: string;
@@ -193,12 +195,93 @@ export const defaultSettings: MessSettings = {
   rosterFrequency: "alternate",
   customRosterDays: [1, 3, 5],
   notifications: { cutoff: true, roster: true, settlement: false },
-  fixedExpenses: [
-    { id: "fixed_wifi", title: "Wi-Fi", amount: 1200 },
-    { id: "fixed_cleaner", title: "Cleaner", amount: 2500 },
-    { id: "fixed_gas", title: "Gas", amount: 1080 },
-  ],
+  fixedExpenses: [],
 };
+
+/** Materialize recurring bills once for the open current month. A saved template
+ * is a rule; this dated entry is what enters settlement, reports and My Money. */
+async function ensureCurrentFixedBills(
+  db: Db,
+  mess: MessDocument,
+  settings: MessSettings,
+  period: Period,
+) {
+  if (period !== periodInZone(settings.timezone)) return;
+  const templates = settings.fixedExpenses.filter((entry) => entry.amount > 0);
+  if (!templates.length) return;
+  const closure = await db.collection<SettlementClosureDocument>("settlementClosures")
+    .findOne({ messId: mess.id, period });
+  if (closure?.status === "closed") return;
+
+  const [members, rooms] = await Promise.all([
+    db.collection<MemberDocument>("members").find({ messId: mess.id }).toArray(),
+    db.collection<RoomDocument>("rooms").find({ messId: mess.id }).toArray(),
+  ]);
+  const manager = members.find((member) => member.userId === mess.managerId && member.status === "active");
+  if (!manager) return;
+  const first = `${period}-01`;
+  const today = todayInZone(settings.timezone);
+  const recurringKeys = templates.map((template) => `${period}:${template.id}`);
+  const existingBills = await db.collection<ExpenseDocument>("expenses").find({
+    messId: mess.id,
+    $or: [
+      { date: { $gte: first, $lte: `${period}-31` }, category: "Fixed" },
+      { recurringKey: { $in: recurringKeys } },
+    ],
+  }).toArray();
+  const recordedKeys = new Set(existingBills.map((bill) => bill.recurringKey).filter(Boolean));
+  const unlinkedBills = existingBills.filter((bill) => !bill.recurringKey);
+
+  for (const template of templates) {
+    const recurringKey = `${period}:${template.id}`;
+    if (recordedKeys.has(recurringKey)) continue;
+    // A bill recorded by hand before recurrence existed should become this
+    // month's instance rather than appearing twice in everyone's cost.
+    const matchingIndex = unlinkedBills.findIndex((bill) =>
+      bill.category === "Fixed" && bill.date >= first && bill.date <= `${period}-31` &&
+      bill.title === template.title && bill.amount === template.amount &&
+      bill.splitMethod === (template.splitMethod ?? "All members equally"),
+    );
+    const matchingBill = matchingIndex >= 0 ? unlinkedBills.splice(matchingIndex, 1)[0] : null;
+    if (matchingBill) {
+      try {
+        const result = await db.collection<ExpenseDocument>("expenses").updateOne(
+          { id: matchingBill.id, messId: mess.id, recurringKey: { $exists: false } },
+          { $set: { recurringKey } },
+        );
+        if (result.modifiedCount) recordedKeys.add(recurringKey);
+      } catch (error) {
+        if (!(typeof error === "object" && error && "code" in error && error.code === 11000)) throw error;
+      }
+      continue;
+    }
+    const templatePayer = template.paidById
+      ? members.find((member) => member.id === template.paidById)
+      : manager;
+    if (!templatePayer) continue;
+    const date = memberActiveOn(templatePayer, first) ? first : today;
+    if (!memberActiveOn(templatePayer, date)) continue;
+    const expense: ExpenseDocument = {
+      id: newId("expense"), messId: mess.id, title: template.title,
+      amount: template.amount, category: "Fixed", splitMethod: template.splitMethod ?? "All members equally",
+      date, createdBy: templatePayer.id, createdAt: new Date().toISOString(), recurringKey,
+    };
+    expense.shares = allocateExpenseShares(expense, members, rooms);
+    if (!expense.shares.length) continue;
+    try {
+      await db.collection<ExpenseDocument>("expenses").updateOne(
+        { messId: mess.id, recurringKey },
+        { $setOnInsert: expense },
+        { upsert: true },
+      );
+      recordedKeys.add(recurringKey);
+    } catch (error) {
+      // A second request can insert the same bill first. The unique index on
+      // (messId, recurringKey) makes that race harmless.
+      if (!(typeof error === "object" && error && "code" in error && error.code === 11000)) throw error;
+    }
+  }
+}
 
 export async function ensureIndexes(db: Db) {
   await Promise.all([
@@ -215,6 +298,7 @@ export async function ensureIndexes(db: Db) {
     db.collection("members").createIndex({ userId: 1, status: 1 }),
     db.collection("meals").createIndex({ messId: 1, userId: 1, date: 1 }, { unique: true }),
     db.collection("meals").createIndex({ messId: 1, date: 1 }),
+    db.collection("cookedMeals").createIndex({ messId: 1, date: 1 }, { unique: true }),
     db.collection("expenses").createIndex({ messId: 1, date: -1 }),
     db.collection("expenses").createIndex(
       { messId: 1, recurringKey: 1 },
@@ -308,11 +392,13 @@ export async function getWorkspaceData(
   settings.timezone = normalizeTimezone(settings.timezone);
   const period = requestedPeriod ?? periodInZone(settings.timezone);
   const workspace = await workspaceFor(db, user, messId, role);
+  if (mess) await ensureCurrentFixedBills(db, mess, settings, period);
 
   const [
     memberDocs,
     rooms,
     periodMeals,
+    cookedMeals,
     expenses,
     bazar,
     activity,
@@ -334,6 +420,8 @@ export async function getWorkspaceData(
         .find({ messId, date: inPeriod(period) })
         .sort({ date: 1 })
         .toArray(),
+      db.collection<CookedMealDocument>("cookedMeals")
+        .find({ messId, date: inPeriod(period) }).sort({ date: 1 }).toArray(),
       db
         .collection<ExpenseDocument>("expenses")
         .find({ messId, date: inPeriod(period) })
@@ -411,6 +499,9 @@ export async function getWorkspaceData(
     bazar,
     expenses: expenses.map((expense) => ({ ...expense, paidById: expense.createdBy })),
   });
+  const mealReconciliation = reconcileCookedMeals(
+    memberDocs, periodMeals, cookedMeals, todayInZone(settings.timezone),
+  );
   const baseSettlement = closureDocument?.status === "closed"
     ? closureDocument.settlement
     : liveSettlement;
@@ -517,6 +608,8 @@ export async function getWorkspaceData(
       }),
     ),
     meals: periodMeals.filter((meal) => meal.userId === user.id).map(toMealEntry),
+    cookedMeals: cookedMeals.map(({ date, cooked, wasted, updatedAt, updatedBy }) => ({ date, cooked, wasted, updatedAt, updatedBy })),
+    mealReconciliation,
     memberMeals: isManager
       ? Object.fromEntries(
           memberDocs.map((member) => [
@@ -811,7 +904,13 @@ export async function ensureDemoData(db: Db) {
         expectedMembers: 5,
         managerId,
         createdAt,
-        settings: defaultSettings,
+        settings: {
+          ...defaultSettings,
+          fixedExpenses: [
+            { id: "fixed_wifi", title: "Wi-Fi", amount: 1200 },
+            { id: "fixed_cleaner", title: "Cleaner", amount: 2500 },
+          ],
+        },
         property: demoProperty,
         facilities: demoFacilities,
       },

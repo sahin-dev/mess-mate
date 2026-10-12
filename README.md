@@ -33,6 +33,22 @@ are retained as dated former memberships, which keeps them in the periods where
 they actually lived in the house. Settle-up transfers can be marked paid by the
 payer, recipient or a manager.
 
+Managers can record a one-time shared bill on `/expenses`, or mark a fixed bill
+to repeat monthly. Saved recurring rules in `/settings?tab=expenses` become
+dated bill entries automatically for each current open month. Dated entries,
+not the rule amounts, feed each member's monthly cost, settlement, My money and
+reports. The first entry preserves the chosen payer and split; later entries
+use the saved payer and split. A rule change affects future entries, while
+existing month entries can be corrected directly on `/expenses`.
+
+Managers can record a one-time shared bill on `/expenses`, or mark a fixed bill
+to repeat monthly. Saved recurring rules in `/settings?tab=expenses` become
+dated bill entries automatically for each current open month. Dated entries,
+not the rule amounts, feed each member's monthly cost, settlement, My money and
+reports. The first entry preserves the chosen payer and split; later entries
+use the saved payer and split. A rule change affects future entries, while
+existing month entries can be corrected directly on `/expenses`.
+
 When meal approval is enabled, pending and rejected changes stay out of the
 meal rate until a manager approves them. A month cannot close while either meal
 or bazar approvals remain unresolved.

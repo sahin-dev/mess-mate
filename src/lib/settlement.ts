@@ -1,6 +1,6 @@
 import type { Period } from "@/lib/period";
 import { todayInZone } from "@/lib/timezone";
-import type { MemberSettlement, Settlement } from "@/lib/types";
+import type { CookedMealEntry, MealCounts, MealKey, MealReconciliation, MemberSettlement, Settlement } from "@/lib/types";
 
 /**
  * Everything the settlement needs, in the shape the database already stores.
@@ -77,6 +77,57 @@ function mealCountsOn(member: SettlementMember, date: string) {
     const from = period === openPeriod ? member.mealCountFrom! : period.from;
     return from <= date && (!period.to || date <= period.to);
   });
+}
+
+const MEAL_KEYS: MealKey[] = ["breakfast", "lunch", "dinner"];
+const emptyMealCounts = (): MealCounts => ({ breakfast: 0, lunch: 0, dinner: 0 });
+
+/** Compare the kitchen's independent count with eligible member entries.
+ * Pending claims are visible but cannot silently become approved meals. */
+export function reconcileCookedMeals(
+  members: SettlementInput["members"],
+  meals: SettlementInput["meals"],
+  cooked: CookedMealEntry[],
+  throughDate: string,
+): MealReconciliation {
+  const membersById = new Map(members.map((member) => [member.id, member]));
+  const byDate = new Map<string, { approved: MealCounts; pending: MealCounts }>();
+  for (const entry of meals) {
+    const member = membersById.get(entry.userId);
+    if (!member || !mealCountsOn(member, entry.date) || entry.status === "Rejected") continue;
+    const counts = byDate.get(entry.date) ?? { approved: emptyMealCounts(), pending: emptyMealCounts() };
+    for (const key of MEAL_KEYS) {
+      counts[entry.status === "Pending" ? "pending" : "approved"][key] += entry[key];
+    }
+    byDate.set(entry.date, counts);
+  }
+  const cookedByDate = new Map(cooked.map((entry) => [entry.date, entry]));
+  const dates = [...new Set([...byDate.keys(), ...cookedByDate.keys()])].sort();
+  const totals = { cooked: 0, wasted: 0, approved: 0, pending: 0, unexplained: 0, overclaimed: 0 };
+  let missingLogDays = 0;
+  const days = dates.map((date) => {
+    const kitchen = cookedByDate.get(date);
+    const claims = byDate.get(date) ?? { approved: emptyMealCounts(), pending: emptyMealCounts() };
+    const wasted = kitchen?.wasted ?? emptyMealCounts();
+    const unexplained = emptyMealCounts();
+    const overclaimed = emptyMealCounts();
+    if (!kitchen && date < throughDate && MEAL_KEYS.some((key) => claims.approved[key] + claims.pending[key] > 0)) {
+      missingLogDays += 1;
+    }
+    for (const key of MEAL_KEYS) {
+      totals.approved += claims.approved[key];
+      totals.pending += claims.pending[key];
+      if (!kitchen) continue;
+      totals.cooked += kitchen.cooked[key];
+      totals.wasted += wasted[key];
+      unexplained[key] = Math.max(0, kitchen.cooked[key] - wasted[key] - claims.approved[key] - claims.pending[key]);
+      overclaimed[key] = Math.max(0, claims.approved[key] + wasted[key] - kitchen.cooked[key]);
+      totals.unexplained += unexplained[key];
+      totals.overclaimed += overclaimed[key];
+    }
+    return { date, cooked: kitchen?.cooked ?? null, wasted, approved: claims.approved, pending: claims.pending, unexplained, overclaimed };
+  });
+  return { days, totals, loggedDays: cooked.length, missingLogDays };
 }
 
 function memberWasPresent(member: SettlementMember, period: Period) {

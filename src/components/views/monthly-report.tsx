@@ -72,7 +72,7 @@ export function MonthlyReport() {
       </ReportSection>
 
       <ReportSection number="02" label="Bills" title="Shared bill register" href={periodHref("/expenses")} link="Open expenses">
-        {templates.length > 0 && <div className="report-template-list"><strong>Recurring bill checklist</strong>{templates.map((template) => { const recorded = recordedTemplates.has(`${data.period}:${template.id}`); return <span key={template.id} className={recorded ? "recorded" : "missing"}>{recorded ? "✓" : "○"} {template.title} · {formatMoney(template.amount)} · {recorded ? "generated" : "not generated"}</span>; })}</div>}
+        {templates.length > 0 && <div className="report-template-list"><strong>Recurring bill checklist</strong>{templates.map((template) => { const recorded = recordedTemplates.has(`${data.period}:${template.id}`); return <span key={template.id} className={recorded ? "recorded" : "missing"}>{recorded ? "✓" : "○"} {template.title} · {formatMoney(template.amount)} · {recorded ? "recorded" : "absent from this month"}</span>; })}</div>}
         <ReportTable columns={["Date", "Bill", "Category", "Paid by", "Split", "Amount"]} rows={data.expenses.map((expense) => [formatDate(expense.date), expense.title, expense.category, expense.paidBy, expense.splitMethod === "By room" ? "By room" : "Equal", formatMoney(expense.amount)])} empty="No shared bills recorded." />
       </ReportSection>
 

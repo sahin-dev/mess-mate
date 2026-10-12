@@ -25,6 +25,7 @@ export function AddExpenseModal({ onClose, expense }: { onClose: () => void; exp
     date: expense?.date ?? todayInZone(data.settings.timezone),
     paidById: expense?.paidById ?? data.workspace.userId,
   });
+  const [repeatMonthly, setRepeatMonthly] = useState(false);
 
   const amount = Number(form.amount) || 0;
   const perMember = amount / Math.max(1, activeMembers.length);
@@ -42,7 +43,7 @@ export function AddExpenseModal({ onClose, expense }: { onClose: () => void; exp
     event.preventDefault();
     const result = await runAction(
       editing ? "updateExpense" : "addExpense",
-      { ...form, amount, id: expense?.id },
+      { ...form, amount, id: expense?.id, repeatMonthly },
       editing ? `${form.title} updated and re-split.` : `${form.title} added to the month.`,
     );
     if (result) onClose();
@@ -153,6 +154,26 @@ export function AddExpenseModal({ onClose, expense }: { onClose: () => void; exp
                 : " Add rooms with rent, and move members into them, to enable the by-room split.")}
           </p>
         </div>
+
+        {!editing && form.category === "Fixed" && (
+          <label className="recurring-choice">
+            <input
+              type="checkbox"
+              checked={repeatMonthly}
+              onChange={(event) => setRepeatMonthly(event.target.checked)}
+            />
+            <span>
+              <strong>Repeat this bill every month</strong>
+              <small>
+                Add this month now and save a recurring bill for future open months. You can edit
+                the saved rule in Settings.
+              </small>
+            </span>
+          </label>
+        )}
+        {editing && expense?.recurringKey && (
+          <p className="recurring-edit-note">This changes this month&rsquo;s bill only. Edit the recurring rule in Settings for future months.</p>
+        )}
 
         <div className="modal-actions">
           <button type="button" className="button button-outline" onClick={onClose}>

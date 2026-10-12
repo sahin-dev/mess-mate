@@ -52,17 +52,17 @@ const WEEKDAYS = [
   { value: 6, label: "Sat" },
 ];
 
-export function SettingsView() {
+export function SettingsView({ initialTab = "general" }: { initialTab?: SettingsTab }) {
   const { data } = useWorkspace();
   // Keying the form on the saved settings restarts it whenever the server
   // value changes, instead of copying props into state from an effect.
   const serverSnapshot = JSON.stringify(data.settings);
-  return <SettingsForm key={serverSnapshot} serverSnapshot={serverSnapshot} />;
+  return <SettingsForm key={serverSnapshot} serverSnapshot={serverSnapshot} initialTab={initialTab} />;
 }
 
-function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
+function SettingsForm({ serverSnapshot, initialTab }: { serverSnapshot: string; initialTab: SettingsTab }) {
   const { data, runAction, busy, confirm } = useWorkspace();
-  const [tab, setTab] = useState<SettingsTab>("general");
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [settings, setSettings] = useState<MessSettings>(() => structuredClone(data.settings));
   const [justSaved, setJustSaved] = useState(false);
 
@@ -307,7 +307,7 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
         )}
 
         {tab === "expenses" && (
-          <section className="panel settings-section">
+          <section className="panel settings-section" id="fixed-bills">
             <div className="settings-heading">
               <span className="settings-icon blue" aria-hidden="true">
                 <CircleDollarSign size={21} />
@@ -315,8 +315,8 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
               <div>
                 <h3>Fixed monthly bills</h3>
                 <p>
-                  Reusable bill templates. Add them once from Expenses each month; MessMate skips
-                  anything already generated.
+                  Save a bill here once. It is added to the current open month and each new month
+                  automatically, then included in everyone&rsquo;s monthly cost.
                 </p>
               </div>
             </div>
@@ -345,6 +345,7 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
                     <input
                       type="number"
                       min="0"
+                      step="0.01"
                       value={expense.amount}
                       onChange={(event) =>
                         patch({
@@ -358,7 +359,9 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
                     />
                   </label>
                   <small>
-                    {formatMoney(expense.amount / Math.max(1, data.workspace.memberCount))} each
+                    {expense.splitMethod === "By room"
+                      ? "Split by room rent"
+                      : `${formatMoney(expense.amount / Math.max(1, data.members.filter((member) => member.status === "active").length))} each`}
                   </small>
                   <button
                     type="button"
@@ -373,15 +376,48 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
                   >
                     <Trash2 size={16} aria-hidden="true" />
                   </button>
+                  <div className="fixed-details">
+                    <label>
+                      Split
+                      <select
+                        value={expense.splitMethod ?? "All members equally"}
+                        onChange={(event) => patch({
+                          fixedExpenses: settings.fixedExpenses.map((item, position) =>
+                            position === index ? { ...item, splitMethod: event.target.value as "All members equally" | "By room" } : item,
+                          ),
+                        })}
+                      >
+                        <option value="All members equally">Equally</option>
+                        <option value="By room">By room rent</option>
+                      </select>
+                    </label>
+                    <label>
+                      Paid by
+                      <select
+                        value={expense.paidById ?? ""}
+                        onChange={(event) => patch({
+                          fixedExpenses: settings.fixedExpenses.map((item, position) =>
+                            position === index ? { ...item, paidById: event.target.value || undefined } : item,
+                          ),
+                        })}
+                      >
+                        <option value="">Mess manager</option>
+                        {data.members.filter((member) => member.status === "active").map((member) => (
+                          <option key={member.id} value={member.id}>{member.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 </li>
               ))}
               {settings.fixedExpenses.length === 0 && (
-                <li className="muted-note">No recurring bills listed yet.</li>
+                <li className="muted-note">No recurring bills yet. Add rent, internet or another regular cost below.</li>
               )}
             </ul>
             <button
               type="button"
               className="add-inline"
+              disabled={settings.fixedExpenses.length >= 30}
               onClick={() =>
                 patch({
                   fixedExpenses: [
@@ -395,8 +431,9 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
                 })
               }
             >
-              <Plus size={16} aria-hidden="true" /> Add a fixed bill
+              <Plus size={16} aria-hidden="true" /> Add recurring bill
             </button>
+            <p className="recurring-edit-note">Saving a rule records it in the current open month. Changes to an existing rule apply to future months; edit the dated bill in Expenses to correct this month.</p>
           </section>
         )}
 

@@ -128,20 +128,6 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
     }
   };
 
-  const generateFixedBills = () =>
-    confirm({
-      title: `Add fixed bills for ${periodLabel(data.period)}?`,
-      message: `${pluralize(data.settings.fixedExpenses.length, "saved bill")} will be added once. Bills already generated for this month are skipped automatically.`,
-      confirmLabel: "Add fixed bills",
-      onConfirm: async () => {
-        await runAction(
-          "generateFixedExpenses",
-          {},
-          "Fixed bills are up to date for this month.",
-        );
-      },
-    });
-
   return (
     <>
       <SectionHeading
@@ -160,11 +146,9 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                 </button>
               ) : (
                 <>
-                  {data.settings.fixedExpenses.length > 0 && (
-                    <button className="button button-outline" onClick={generateFixedBills} disabled={busy}>
-                      <ReceiptText size={16} aria-hidden="true" /> Add fixed bills
-                    </button>
-                  )}
+                  <Link className="button button-outline" href={periodHref("/settings?tab=expenses")}>
+                    <ReceiptText size={16} aria-hidden="true" /> Recurring bills
+                  </Link>
                   <button className="button button-outline" onClick={closeMonth} disabled={busy}>
                     <LockKeyhole size={16} aria-hidden="true" /> Close month
                   </button>
@@ -498,20 +482,20 @@ function BillPolicyPanel({
       <div className="bill-policy-head">
         <div>
           <span className="section-kicker">BILL RULES</span>
-          <h3 id="bill-policy-title">Fixed and shared bills stay visible</h3>
-          <p>Templates are reusable; recorded bills are locked into the selected month.</p>
+          <h3 id="bill-policy-title">One bill register, clear monthly totals</h3>
+          <p>Shared bills count when recorded. Recurring fixed bills are recorded automatically each open month.</p>
         </div>
         {isManager && (
-          <Link className="button button-outline button-tiny" href={periodHref("/settings")}>
-            Manage bill templates
+          <Link className="button button-outline button-tiny" href={periodHref("/settings?tab=expenses")}>
+            Manage recurring bills
           </Link>
         )}
       </div>
       <div className="bill-policy-grid">
         <div>
-          <span>Saved fixed bills</span>
+          <span>Recurring rules</span>
           <strong>{formatMoney(fixedTemplateTotal)}</strong>
-          <small>{pluralize(data.settings.fixedExpenses.length, "template")} ready to generate monthly</small>
+          <small>{pluralize(data.settings.fixedExpenses.length, "bill")} scheduled each open month</small>
         </div>
         <div>
           <span>Fixed this month</span>
@@ -531,10 +515,10 @@ function BillPolicyPanel({
       </div>
       {data.settings.fixedExpenses.length > 0 && (
         <div className="bill-template-status">
-          <strong>{missingTemplates.length === 0 ? "Recurring bill templates generated" : `${missingTemplates.length} recurring ${missingTemplates.length === 1 ? "template" : "templates"} to generate`}</strong>
+          <strong>{missingTemplates.length === 0 ? "Recurring bills recorded" : `${missingTemplates.length} recurring ${missingTemplates.length === 1 ? "bill" : "bills"} absent from this month`}</strong>
           <span>
             {missingTemplates.length === 0
-              ? `All saved bill templates have generated entries for ${periodLabel(data.period)}.`
+              ? `Every saved recurring bill has a dated entry for ${periodLabel(data.period)}.`
               : missingTemplates.map((template) => template.title).join(", ")}
           </span>
         </div>

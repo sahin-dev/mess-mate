@@ -10,6 +10,7 @@ import {
   type AvatarDocument,
   type ListingPhotoDocument,
   type MealDocument,
+  type CookedMealDocument,
   type MemberDocument,
   type NoticeDocument,
   type RoomDocument,
@@ -823,6 +824,46 @@ export async function POST(request: Request) {
           "blue",
         );
       }
+    } else if (action === "saveCookedMeals") {
+      requireManager(role);
+      const date = dateString(body.date);
+      await assertMonthOpen(db, messId, date);
+      if (date > todayInZone(settings.timezone)) {
+        throw new ApiError(400, "Record cooked meals after they have been prepared.");
+      }
+      const suppliedCooked = body.cooked as Record<string, unknown> | undefined;
+      const suppliedWasted = body.wasted as Record<string, unknown> | undefined;
+      if (!suppliedCooked || !suppliedWasted ||
+          typeof suppliedCooked !== "object" || typeof suppliedWasted !== "object" ||
+          Array.isArray(suppliedCooked) || Array.isArray(suppliedWasted)) {
+        throw new ApiError(400, "Cooked and wasted counts are required.");
+      }
+      const count = (value: unknown, label: string) => {
+        const parsed = cleanNumber(value, label, 0, 10_000);
+        if (!Number.isInteger(parsed)) throw new ApiError(400, `${label} must be a whole number.`);
+        return parsed;
+      };
+      const cooked = {
+        breakfast: count(suppliedCooked.breakfast, "Cooked breakfast"),
+        lunch: count(suppliedCooked.lunch, "Cooked lunch"),
+        dinner: count(suppliedCooked.dinner, "Cooked dinner"),
+      };
+      const wasted = {
+        breakfast: count(suppliedWasted.breakfast, "Wasted breakfast"),
+        lunch: count(suppliedWasted.lunch, "Wasted lunch"),
+        dinner: count(suppliedWasted.dinner, "Wasted dinner"),
+      };
+      for (const key of ["breakfast", "lunch", "dinner"] as const) {
+        if (wasted[key] > cooked[key]) {
+          throw new ApiError(400, `${key} waste cannot exceed the amount cooked.`);
+        }
+      }
+      await db.collection<CookedMealDocument>("cookedMeals").updateOne(
+        { messId, date },
+        { $set: { cooked, wasted, updatedAt: new Date().toISOString(), updatedBy: user.name } },
+        { upsert: true },
+      );
+      await addActivity(db, messId, "Kitchen count recorded", `${user.name} recorded cooked and wasted meals for ${date}`, "blue");
     } else if (action === "reviewMeal") {
       requireManager(role);
       const id = cleanString(body.id, "Meal entry", 100);
@@ -885,7 +926,27 @@ export async function POST(request: Request) {
       if (!expense.shares.length) {
         throw new ApiError(409, "No active members can share this expense on that date.");
       }
+      const repeatMonthly = body.repeatMonthly === true && expense.category === "Fixed";
+      const templateId = repeatMonthly ? newId("fixed") : null;
+      if (templateId && settings.fixedExpenses.length >= 30) {
+        throw new ApiError(400, "This mess already has the maximum of 30 recurring bills.");
+      }
+      if (templateId) expense.recurringKey = `${expense.date.slice(0, 7)}:${templateId}`;
       await db.collection<ExpenseDocument>("expenses").insertOne(expense);
+      if (templateId) {
+        try {
+          await db.collection<MessDocument>("messes").updateOne(
+            { id: messId },
+            { $push: { "settings.fixedExpenses": {
+              id: templateId, title: expense.title, amount: expense.amount,
+              paidById: expense.createdBy, splitMethod: expense.splitMethod,
+            } } },
+          );
+        } catch (error) {
+          await db.collection<ExpenseDocument>("expenses").deleteOne({ id: expense.id, messId });
+          throw error;
+        }
+      }
       await addActivity(
         db,
         messId,
@@ -907,15 +968,19 @@ export async function POST(request: Request) {
       let created = 0;
       for (const template of settings.fixedExpenses.filter((entry) => entry.amount > 0)) {
         const recurringKey = `${period}:${template.id}`;
+        const selectedPayer = template.paidById
+          ? members.find((member) => member.id === template.paidById)
+          : payer;
+        if (!selectedPayer || !memberActiveOn(selectedPayer, `${period}-01`)) continue;
         const expense: ExpenseDocument = {
           id: newId("expense"),
           messId,
           title: template.title,
           amount: template.amount,
           category: "Fixed",
-          splitMethod: "All members equally",
+          splitMethod: template.splitMethod ?? "All members equally",
           date: `${period}-01`,
-          createdBy: payer.id,
+          createdBy: selectedPayer.id,
           createdAt: new Date().toISOString(),
           recurringKey,
         };
@@ -1796,6 +1861,8 @@ export async function POST(request: Request) {
               id: typeof expense.id === "string" ? expense.id : newId("fixed"),
               title: cleanString(expense.title, `Fixed expense ${index + 1}`, 80),
               amount: cleanNumber(expense.amount, `Fixed expense ${index + 1} amount`, 0),
+              paidById: typeof expense.paidById === "string" ? expense.paidById : undefined,
+              splitMethod: expense.splitMethod === "By room" ? "By room" as const : "All members equally" as const,
             }))
           : [],
       };
@@ -1804,6 +1871,14 @@ export async function POST(request: Request) {
       }
       if (sanitized.rosterFrequency === "custom" && sanitized.customRosterDays.length === 0) {
         throw new ApiError(400, "Choose at least one shopping day for the custom roster.");
+      }
+      const activePayerIds = new Set(
+        (await db.collection<MemberDocument>("members")
+          .find({ messId, status: "active" }, { projection: { id: 1 } }).toArray())
+          .map((member) => member.id),
+      );
+      if (sanitized.fixedExpenses.some((expense) => expense.paidById && !activePayerIds.has(expense.paidById))) {
+        throw new ApiError(400, "Choose an active member to pay each recurring bill.");
       }
       await db
         .collection<MessDocument>("messes")

@@ -265,6 +265,34 @@ export type MealEntry = Record<MealKey, number> & {
   status: "Open" | "Closed" | "Pending" | "Rejected";
 };
 
+export type MealCounts = Record<MealKey, number>;
+
+/** Independent kitchen log, entered by a manager after food is prepared. */
+export type CookedMealEntry = {
+  date: string;
+  cooked: MealCounts;
+  wasted: MealCounts;
+  updatedAt: string;
+  updatedBy: string;
+};
+
+export type MealReconciliationDay = {
+  date: string;
+  cooked: MealCounts | null;
+  wasted: MealCounts;
+  approved: MealCounts;
+  pending: MealCounts;
+  unexplained: MealCounts;
+  overclaimed: MealCounts;
+};
+
+export type MealReconciliation = {
+  days: MealReconciliationDay[];
+  totals: { cooked: number; wasted: number; approved: number; pending: number; unexplained: number; overclaimed: number };
+  loggedDays: number;
+  missingLogDays: number;
+};
+
 export type Expense = {
   id: string;
   title: string;
@@ -309,7 +337,7 @@ export type MessSettings = {
     roster: boolean;
     settlement: boolean;
   };
-  fixedExpenses: { id: string; title: string; amount: number }[];
+  fixedExpenses: { id: string; title: string; amount: number; paidById?: string; splitMethod?: SplitMethod }[];
 };
 
 export type ActivityItem = {
@@ -380,6 +408,8 @@ export type WorkspaceData = {
   rooms: Room[];
   /** The signed-in member's own entries for the period. */
   meals: MealEntry[];
+  cookedMeals: CookedMealEntry[];
+  mealReconciliation: MealReconciliation;
   expenses: Expense[];
   bazar: BazarEntry[];
   settings: MessSettings;
