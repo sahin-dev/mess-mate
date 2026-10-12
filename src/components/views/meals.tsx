@@ -20,6 +20,7 @@ import { cutoffHasPassed, periodInZone, timezoneOffsetLabel, todayInZone } from 
 import type { MealKey } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState, SectionHeading } from "@/components/ui";
 import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
+import { MealReconciliationPanel } from "@/components/meal-reconciliation";
 
 const ALL_KEYS: MealKey[] = ["breakfast", "lunch", "dinner"];
 const SHORT: Record<MealKey, string> = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner" };
@@ -310,6 +311,8 @@ export function MealsView() {
           </span>
         </div>
       </div>
+
+      <MealReconciliationPanel />
 
       <section className="panel meal-table-card">
         <div className="table-toolbar">

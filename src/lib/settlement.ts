@@ -95,6 +95,7 @@ export function reconcileCookedMeals(
   for (const entry of meals) {
     const member = membersById.get(entry.userId);
     if (!member || !mealCountsOn(member, entry.date) || entry.status === "Rejected") continue;
+    if (MEAL_KEYS.every((key) => entry[key] === 0)) continue;
     const counts = byDate.get(entry.date) ?? { approved: emptyMealCounts(), pending: emptyMealCounts() };
     for (const key of MEAL_KEYS) {
       counts[entry.status === "Pending" ? "pending" : "approved"][key] += entry[key];
@@ -111,7 +112,7 @@ export function reconcileCookedMeals(
     const wasted = kitchen?.wasted ?? emptyMealCounts();
     const unexplained = emptyMealCounts();
     const overclaimed = emptyMealCounts();
-    if (!kitchen && date < throughDate && MEAL_KEYS.some((key) => claims.approved[key] + claims.pending[key] > 0)) {
+    if (!kitchen && date <= throughDate && MEAL_KEYS.some((key) => claims.approved[key] + claims.pending[key] > 0)) {
       missingLogDays += 1;
     }
     for (const key of MEAL_KEYS) {

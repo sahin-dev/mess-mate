@@ -7,6 +7,7 @@ import { useWorkspace, usePeriodHref } from "@/components/workspace-context";
 import { SectionHeading } from "@/components/ui";
 import { downloadCsv, formatDate, formatMoney } from "@/lib/format";
 import { periodLabel } from "@/lib/period";
+import { todayInZone } from "@/lib/timezone";
 import type { MealEntry } from "@/lib/types";
 
 const mealTotal = (entry: MealEntry) => entry.breakfast + entry.lunch + entry.dinner;
@@ -25,6 +26,9 @@ export function MonthlyReport() {
   const pendingMeals = mealRows.filter((entry) => entry.status === "Pending").length;
   const pendingBazar = data.bazar.filter((entry) => entry.status === "Pending").length;
   const pendingTransfers = settlement.transfers.filter((transfer) => transfer.paymentStatus !== "paid").length;
+  const kitchen = data.mealReconciliation;
+  const kitchenRows = kitchen.days.filter((day) => day.date <= todayInZone(data.settings.timezone));
+  const countMeals = (counts: { breakfast: number; lunch: number; dinner: number }) => counts.breakfast + counts.lunch + counts.dinner;
   const templates = data.settings.fixedExpenses.filter((template) => template.amount > 0);
   const recordedTemplates = new Set(data.expenses.map((expense) => expense.recurringKey));
 
@@ -36,6 +40,8 @@ export function MonthlyReport() {
     ["Total spend", spend], ["Meal count", settlement.totalMeals], ["Meal rate", settlement.mealRate],
     [], ["Meal date", "Member", "Breakfast", "Lunch", "Dinner", "Total", "Status"],
     ...mealRows.map((entry) => [entry.date, entry.member, entry.breakfast, entry.lunch, entry.dinner, mealTotal(entry), entry.status]),
+    [], ["Kitchen date", "Cooked B", "Cooked L", "Cooked D", "Waste B", "Waste L", "Waste D", "Approved B", "Approved L", "Approved D", "Pending B", "Pending L", "Pending D", "Unexplained", "Overclaimed"],
+    ...kitchenRows.map((day) => [day.date, day.cooked?.breakfast ?? "", day.cooked?.lunch ?? "", day.cooked?.dinner ?? "", day.wasted.breakfast, day.wasted.lunch, day.wasted.dinner, day.approved.breakfast, day.approved.lunch, day.approved.dinner, day.pending.breakfast, day.pending.lunch, day.pending.dinner, countMeals(day.unexplained), countMeals(day.overclaimed)]),
     [], ["Bazar date", "Buyer", "Items", "BDT", "Status"],
     ...data.bazar.map((entry) => [entry.date, entry.by, entry.items.map((item) => `${item.name}${item.quantity ? ` (${item.quantity})` : ""}`).join("; "), entry.amount, entry.status]),
     [], ["Bill date", "Title", "Category", "BDT", "Paid by", "Split"],
@@ -83,6 +89,9 @@ export function MonthlyReport() {
 
       <ReportSection number="04" label="Meals" title={isManager ? "All member meals" : "Your meal entries"} href={periodHref("/meals")} link="Open meals">
         <p className="report-explainer">{isManager ? "Every saved member entry appears below." : "Other members' meal entries stay private; settlement totals include everyone's approved meals."} Pending and rejected entries are excluded from the rate.</p>
+        <div className="report-template-list"><strong>Kitchen reconciliation</strong><span>{kitchen.totals.cooked} cooked · {kitchen.totals.approved} approved member meals · {kitchen.totals.pending} pending · {kitchen.totals.wasted} recorded waste</span><span>{kitchen.totals.unexplained} unexplained · {kitchen.totals.overclaimed} overclaimed · {kitchen.missingLogDays} days missing a kitchen log</span></div>
+        <ReportTable columns={["Date", "Cooked", "Approved", "Pending", "Waste", "Unexplained", "Overclaimed"]} rows={kitchenRows.map((day) => [formatDate(day.date), day.cooked ? countMeals(day.cooked) : "Not logged", countMeals(day.approved), countMeals(day.pending), day.cooked ? countMeals(day.wasted) : "—", day.cooked ? countMeals(day.unexplained) : "—", day.cooked ? countMeals(day.overclaimed) : "—"])} empty="No kitchen counts or member meals to compare." />
+        <p className="report-explainer">Unexplained portions are not assumed to be waste. Confirmed waste is recorded separately by a manager.</p>
         <ReportTable columns={["Date", "Member", "Breakfast", "Lunch", "Dinner", "Count", "Status"]} rows={mealRows.map((entry) => [formatDate(entry.date), entry.member, entry.breakfast, entry.lunch, entry.dinner, mealTotal(entry), entry.status])} empty="No meal entries recorded." />
       </ReportSection>
 

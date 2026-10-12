@@ -109,7 +109,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
     confirm({
       title: `Close ${periodLabel(data.period)}?`,
       message:
-        "This freezes the meal rate, balances, and settle-up plan. Meals, bazar, and bills in this month cannot change until a manager reopens it.",
+        `This freezes meals, bazar, bills and the settlement until a manager reopens the month. Kitchen check: ${data.mealReconciliation.loggedDays === 0 ? "no cooked counts logged, so meals cannot be reconciled yet" : `${data.mealReconciliation.loggedDays} days logged, ${data.mealReconciliation.missingLogDays} days without a kitchen count, ${data.mealReconciliation.totals.unexplained} unexplained and ${data.mealReconciliation.totals.overclaimed} overclaimed meals`}.`,
       confirmLabel: "Close month",
       onConfirm: async () => {
         await runAction("closeMonth", { closePeriod: data.period }, "Month closed and settlement frozen.");

@@ -53,6 +53,13 @@ When meal approval is enabled, pending and rejected changes stay out of the
 meal rate until a manager approves them. A month cannot close while either meal
 or bazar approvals remain unresolved.
 
+Managers can separately record how many breakfasts, lunches and dinners the
+kitchen cooked each day, plus confirmed wasted portions. The Meals page and
+monthly PDF/CSV compare that log with approved and pending member entries.
+Unexplained portions indicate a missing entry or another difference to review;
+they are not automatically treated as waste. The kitchen log does not change
+meal rate or settlement, and a closed month freezes it with the member entries.
+
 The private **My money** ledger uses the member's economic share rather than
 the full amount they happened to pay up front. Their meal cost and share of
 every shared bill are added automatically to **Living**; repayments between
