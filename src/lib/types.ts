@@ -272,6 +272,8 @@ export type Expense = {
   splitMethod: SplitMethod;
   paidBy: string;
   paidById: string;
+  /** Identifies the saved monthly bill that generated this entry. */
+  recurringKey?: string;
   /** Allocation captured when the bill was created, so later roster changes cannot rewrite history. */
   shares?: { memberId: string; amount: number }[];
 };

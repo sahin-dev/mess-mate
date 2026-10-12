@@ -68,7 +68,15 @@ export function pluralize(count: number, singular: string, plural = `${singular}
  */
 export function downloadCsv(filename: string, rows: (string | number)[][]) {
   const csv = rows
-    .map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(","))
+    .map((row) => row.map((cell) => {
+      const value = String(cell);
+      // Spreadsheet apps execute cells beginning with formula markers. Prefix
+      // user-written text so exporting a bill title or item cannot run a formula.
+      const safe = typeof cell === "string" && /^[\s\x00-\x1f]*[=+@-]/.test(value)
+        ? `'${value}`
+        : value;
+      return `"${safe.replaceAll('"', '""')}"`;
+    }).join(","))
     .join("\r\n");
   const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);

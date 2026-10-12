@@ -13,12 +13,13 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { downloadCsv, formatDate, formatMoney, pluralize } from "@/lib/format";
 import { daysInPeriod, periodLabel } from "@/lib/period";
 import { cutoffHasPassed, periodInZone, timezoneOffsetLabel, todayInZone } from "@/lib/timezone";
 import type { MealKey } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState, SectionHeading } from "@/components/ui";
-import { useWorkspace } from "@/components/workspace-context";
+import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
 const ALL_KEYS: MealKey[] = ["breakfast", "lunch", "dinner"];
 const SHORT: Record<MealKey, string> = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner" };
@@ -28,6 +29,7 @@ type Counts = Record<MealKey, number>;
 
 export function MealsView() {
   const { data, runAction, busy, isManager } = useWorkspace();
+  const periodHref = usePeriodHref();
   const timeZone = data.settings.timezone;
   const today = todayInZone(timeZone);
   const keys = ALL_KEYS.filter((key) => data.settings.mealTypes[key]);
@@ -323,6 +325,7 @@ export function MealsView() {
             </p>
           </div>
           <div className="view-actions">
+            <Link className="filter-button" href={periodHref("/reports")}>Monthly PDF</Link>
             <span className="entry-window">
               <Clock3 size={14} aria-hidden="true" />{" "}
               {data.settings.allowAnytime ? "Always open" : `Cutoff ${data.settings.cutoff}`}

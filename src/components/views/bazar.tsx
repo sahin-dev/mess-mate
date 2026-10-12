@@ -14,12 +14,13 @@ import {
   Undo2,
 } from "lucide-react";
 import { useState } from "react";
+import Link from "next/link";
 import { downloadCsv, formatDate, formatMoney, pluralize } from "@/lib/format";
 import { periodLabel } from "@/lib/period";
 import type { BazarEntry } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState, Modal, SectionHeading } from "@/components/ui";
 import { AddBazarModal } from "@/components/entry-modals";
-import { useWorkspace } from "@/components/workspace-context";
+import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
 const ROSTER_LABEL: Record<string, string> = {
   alternate: "Every other day",
@@ -30,6 +31,7 @@ const ROSTER_LABEL: Record<string, string> = {
 
 export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
   const { data, runAction, busy, isManager, confirm } = useWorkspace();
+  const periodHref = usePeriodHref();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [receipt, setReceipt] = useState<BazarEntry | null>(null);
@@ -145,6 +147,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
               </p>
             </div>
             <div className="view-actions">
+              <Link className="filter-button" href={periodHref("/reports")}>Monthly PDF</Link>
               <label className="search-box">
                 <Search size={15} aria-hidden="true" />
                 <span className="visually-hidden">Search bazar entries</span>

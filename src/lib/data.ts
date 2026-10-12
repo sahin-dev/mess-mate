@@ -533,6 +533,7 @@ export async function getWorkspaceData(
       splitMethod: expense.splitMethod === "By room" ? "By room" : "All members equally",
       paidById: expense.createdBy,
       paidBy: memberNames.get(expense.createdBy) ?? "A former member",
+      recurringKey: expense.recurringKey,
       shares: expense.shares,
     })),
     bazar: bazar.map((entry) => ({

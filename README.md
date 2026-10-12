@@ -113,6 +113,7 @@ the rest of the app is served `noindex`.
 | `/meals`                 | Your own meal entries for the month              |
 | `/bazar`                 | Grocery ledger, receipts and the duty roster     |
 | `/expenses`              | Shared bills and the full settlement             |
+| `/reports`               | Monthly meals, bazar, bills, spending breakdown and settlement; print or save as PDF |
 | `/money`                 | Private income, spending, Living costs and budgets |
 | `/house`                 | Building & flat, rooms, facilities, listings     |
 | `/members`               | Members and balances                             |
@@ -412,6 +413,13 @@ failed run — sends nothing extra.
 3. Run `pnpm run seed` once against the production database.
 4. `pnpm run build && pnpm run start`, behind TLS.
 5. Point your uptime check at `/api/health`.
+
+The monthly report follows the selected `?month=YYYY-MM`. Managers see every
+member's saved meal entries; members see their own meals plus the shared bazar,
+bills and settlement. The **Save as PDF** action opens the browser print window
+with an A4 layout; choose **Save as PDF** there. The same page downloads a CSV
+containing every visible record. CSV text from user-entered fields is escaped
+before spreadsheet export so it cannot be interpreted as a formula.
 
 ## Known limitations
 

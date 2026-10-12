@@ -61,6 +61,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
     .reduce((sum, expense) => sum + expense.amount, 0);
   const myExpenseShare =
     settlementMembers.find((member) => member.id === data.workspace.userId)?.expenseShare ?? 0;
+  const periodHref = usePeriodHref();
 
   const exportLedger = () =>
     downloadCsv(`messmate-settlement-${data.period}.csv`, [
@@ -150,6 +151,9 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
         action={
           isManager ? (
             <div className="view-actions">
+              <Link className="button button-outline" href={periodHref("/reports")}>
+                <FileText size={16} aria-hidden="true" /> Monthly report / PDF
+              </Link>
               {closed ? (
                 <button className="button button-outline" onClick={() => setReopening(true)}>
                   <UnlockKeyhole size={16} aria-hidden="true" /> Reopen month
@@ -170,7 +174,11 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                 <Plus size={17} aria-hidden="true" /> Add expense
               </button>
             </div>
-          ) : undefined
+          ) : (
+            <Link className="button button-outline" href={periodHref("/reports")}>
+              <FileText size={16} aria-hidden="true" /> Monthly report / PDF
+            </Link>
+          )
         }
       />
 
@@ -480,6 +488,10 @@ function BillPolicyPanel({
     0,
   );
   const averageSharedShare = sharedExpenseTotal / Math.max(1, activeMemberCount);
+  const recordedTemplates = new Set(data.expenses.map((expense) => expense.recurringKey));
+  const missingTemplates = data.settings.fixedExpenses.filter(
+    (template) => template.amount > 0 && !recordedTemplates.has(`${data.period}:${template.id}`),
+  );
 
   return (
     <section className="bill-policy-panel" aria-labelledby="bill-policy-title">
@@ -517,6 +529,16 @@ function BillPolicyPanel({
           <small>Only your allocated amount is added to your balance</small>
         </div>
       </div>
+      {data.settings.fixedExpenses.length > 0 && (
+        <div className="bill-template-status">
+          <strong>{missingTemplates.length === 0 ? "Recurring bill templates generated" : `${missingTemplates.length} recurring ${missingTemplates.length === 1 ? "template" : "templates"} to generate`}</strong>
+          <span>
+            {missingTemplates.length === 0
+              ? `All saved bill templates have generated entries for ${periodLabel(data.period)}.`
+              : missingTemplates.map((template) => template.title).join(", ")}
+          </span>
+        </div>
+      )}
     </section>
   );
 }
