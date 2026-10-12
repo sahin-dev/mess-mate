@@ -11,6 +11,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { formatDate, formatMoney, pluralize, signedMoney } from "@/lib/format";
@@ -237,6 +238,8 @@ export function MembersView() {
             </div>
             {members.map((member) => {
               const mine = member.id === data.workspace.userId;
+              // The owner cannot be demoted or removed; the server refuses it too.
+              const owner = member.id === data.workspace.ownerId;
               return (
                 <div className="member-row" key={member.id}>
                   <div>
@@ -255,7 +258,7 @@ export function MembersView() {
                     </span>
                   </div>
                   <span className={`role-badge ${member.status === "former" ? "former" : member.role.toLowerCase()}`}>
-                    {member.status === "former" ? "Former" : member.role}
+                    {member.status === "former" ? "Former" : owner ? "Owner" : member.role}
                   </span>
                   <span className="cell-muted">{member.room}</span>
                   <span className="cell-muted">
@@ -308,10 +311,12 @@ export function MembersView() {
                       <button
                         type="button"
                         className="icon-action"
-                        disabled={busy || member.id === data.workspace.userId}
+                        disabled={busy || mine || owner}
                         title={
-                          member.id === data.workspace.userId
+                          mine
                             ? "You cannot change your own role"
+                            : owner
+                              ? "The owner always stays a manager"
                             : member.role === "Manager"
                               ? "Remove manager access"
                               : "Make manager"
@@ -330,8 +335,14 @@ export function MembersView() {
                       <button
                         type="button"
                         className="icon-action danger"
-                        disabled={busy || mine}
-                        title={mine ? "You cannot remove yourself" : `Remove ${member.name}`}
+                        disabled={busy || mine || owner}
+                        title={
+                          mine
+                            ? "You cannot remove yourself"
+                            : owner
+                              ? "The owner cannot be removed"
+                              : `Remove ${member.name}`
+                        }
                         aria-label={`Remove ${member.name}`}
                         onClick={() => removeMember(member)}
                       >
@@ -346,7 +357,7 @@ export function MembersView() {
         )}
       </section>
 
-      {me && me.role !== "Manager" && (
+      {me && !data.workspace.isOwner && (
         <section className="leave-mess">
           <div>
             <strong>Leaving {data.workspace.messName}?</strong>
@@ -358,6 +369,20 @@ export function MembersView() {
           <button type="button" className="button button-outline" onClick={leave}>
             <LogOut size={15} aria-hidden="true" /> Leave this mess
           </button>
+        </section>
+      )}
+      {me && data.workspace.isOwner && (
+        <section className="leave-mess">
+          <div>
+            <strong>Moving out?</strong>
+            <p>
+              You own {data.workspace.messName}, so hand ownership to a housemate in Mess settings
+              before you leave.
+            </p>
+          </div>
+          <Link className="button button-outline" href="/settings">
+            Hand over ownership
+          </Link>
         </section>
       )}
 

@@ -128,7 +128,8 @@ the rest of the app is served `noindex`.
 | `/api/auth`       | Session restore, sign up, sign in, demo, sign out               |
 | `/api/workspace`  | Month-scoped reads and every validated mutation                 |
 | `/api/proof`      | Streams a bazar receipt to members of that mess only            |
-| `/api/admin`      | Platform aggregates. Administrators only                        |
+| `/api/admin`      | Admin console reads (`?view=`) and audited actions. Administrators only |
+| `/api/report`     | A visitor reports a public to-let post. Throttled, no sign-in   |
 | `/api/health`     | Liveness and database reachability, for uptime checks           |
 | `/api/cron/notifications` | Scheduled reminders. Bearer token, run hourly           |
 | `/api/geocode`    | Address search for the map picker, proxied to Nominatim          |
@@ -186,9 +187,29 @@ membership id is re-keyed to their account id.
 
 ### Leaving
 
-Any member can leave from `/members`. Two things block it: the owner cannot
-leave their own house, and unsettled bazar must be resolved first, so a
-departure cannot erase money the house still owes.
+Any member — including a manager — can leave from `/members`. Two things block
+it: the owner cannot leave their own house, and unsettled bazar must be
+resolved first, so a departure cannot erase money the house still owes.
+
+The owner hands the house on from **Settings → General → Hand over ownership**,
+confirmed with their password. The new owner becomes a manager if they were
+not one already; the old owner stays a manager until someone changes that.
+
+An account belongs to one mess at a time. Creating a mess, joining one, or
+being admitted from a join request is refused while the account is still
+active somewhere else.
+
+## Day-to-day records
+
+- **Editing.** A manager can edit a shared bill; its split is recalculated for
+  the new amount and date. Bazar entries can be edited by a manager, or by the
+  member who bought it — when bazar approval is on, a member's edit goes back
+  to pending. Both are refused in a closed month, and both are written to the
+  activity log, as are deletions.
+- **Notice board.** Managers pin notes for the whole house ("Rent is due by the
+  5th") on the overview. Pinned notices stay on top.
+- **Rooms.** A room's capacity cannot drop below the people living in it, and
+  deleting a room also removes any to-let posts for it.
 
 ## Recording for someone else
 
@@ -271,6 +292,47 @@ the query string, so a search can be bookmarked and shared.
 
 `/` and `/community` (with its listing pages) are the only parts of the app
 `robots.txt` allows; everything else stays `noindex`.
+
+## Platform administration
+
+`/admin` is for accounts with `isAdmin` set. Every section is a real URL
+(`/admin?view=users`), searches and filters run in the database, and lists are
+paged, so the console keeps working as the platform grows.
+
+| Section | What it is for |
+| --- | --- |
+| Overview | Live counts, active users, sign-ups, a queue of what needs attention, and any configuration problems |
+| Users | Search and filter accounts; open one to see its memberships and history. Suspend or restore, sign out everywhere, send a password reset, grant or remove administrator access |
+| Messes | Search houses; open one for its roster, counts and recent activity. Suspend or restore |
+| Listings & reports | Reports filed by visitors, and every to-let post. Take a post down with a reason, or allow it again |
+| Announcements | Banners shown at the top of every workspace — to everyone or managers only, optionally scheduled |
+| Workspace activity | Events from every mess, searchable |
+| Admin audit log | Every change an administrator makes: who, what, to whom, and why |
+| System health | A deployment checklist (email, public URL, cron secret, demo sign-in), database size and per-collection counts, runtime details |
+
+What the actions do:
+
+- **Suspending an account** signs it out on every device and refuses sign-in and
+  password resets. Its memberships and records are untouched. Administrators
+  must lose that access before they can be suspended, an administrator cannot
+  act on their own account, the shared demo accounts cannot be changed, and the
+  last administrator cannot be removed.
+- **Suspending a mess** makes it read-only for its members (each person's
+  private *My money* page keeps working), stops anyone new joining, and hides
+  its posts from the community. Restoring it brings everything back unchanged.
+- **Taking a post down** returns it to a draft, closes its open reports, and
+  shows the manager the reason. They can still edit it, but cannot republish it
+  until an administrator allows it again.
+- **Reports** come from a *Report this post* link on every public listing. No
+  sign-in is needed; each caller can file five an hour, and a repeat report of
+  the same post by the same caller is folded into the first. The caller's
+  address is only stored as a hash.
+
+To make the first administrator on a fresh deployment, set the flag directly:
+
+```js
+db.users.updateOne({ email: "you@example.com" }, { $set: { isAdmin: true } })
+```
 
 ## Time and timezones
 
@@ -366,9 +428,12 @@ failed run — sends nothing extra.
 - Photos are stored as base64 in MongoDB, capped at 8 per post and ~1.5 MB
   each after the browser resizes them. Object storage would suit a large
   deployment better.
-- There is no platform-wide moderation queue. A manager's post goes live
-  immediately and nothing is verified by MessMate; the public pages say so. A
-  member's post is checked by their own manager, but by nobody else.
+- A manager's post goes live immediately and is not checked in advance;
+  moderation happens afterwards, from visitor reports and the admin console. A
+  member's post is checked by their own manager first.
+- Pages stream behind a loading state, so a missing or taken-down listing is
+  served as a `noindex` not-found page with HTTP 200 rather than a true 404, and
+  sign-in redirects happen in the browser.
 - Address search depends on the public Nominatim service, which is rate limited
   and can be slow; the map always allows dropping a pin by hand instead.
 - Browser extensions that rewrite credential inputs (password managers, throwaway

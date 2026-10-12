@@ -1,7 +1,7 @@
 import {
   addActivity,
   defaultSettings,
-  ensureIndexes,
+  ensureIndexesOnce,
   getWorkspaceData,
   MEMBER_COLORS,
   type BazarDocument,
@@ -11,6 +11,7 @@ import {
   type ListingPhotoDocument,
   type MealDocument,
   type MemberDocument,
+  type NoticeDocument,
   type RoomDocument,
   type SettlementClosureDocument,
   type SettlementPaymentDocument,
@@ -35,6 +36,8 @@ import {
 } from "@/lib/timezone";
 import {
   ApiError,
+  assertMessWritable,
+  assertNoOtherActiveMess,
   assertSameOrigin,
   cleanEmail,
   cleanNumber,
@@ -142,6 +145,21 @@ const PROFILE_ACTIONS = new Set([
   "setAvatar",
   "removeAvatar",
 ]);
+
+/**
+ * Actions that only touch the signed-in person's own records. They keep working
+ * in a mess the platform team has suspended, because nothing shared changes.
+ */
+const PERSONAL_ACTIONS = new Set([
+  ...PROFILE_ACTIONS,
+  "addMoneyTransaction",
+  "updateMoneyTransaction",
+  "deleteMoneyTransaction",
+  "setMoneyBudget",
+]);
+
+/** Generous for a person clicking, tight enough to stop a runaway script. */
+const MUTATIONS_PER_MINUTE = 120;
 
 const optionalText = (value: unknown, max: number) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -261,6 +279,40 @@ async function assertMonthOpen(
   }
 }
 
+function parseBazarItems(value: unknown) {
+  const rawItems = Array.isArray(value) ? value : [];
+  if (!rawItems.length || rawItems.length > 30) {
+    throw new ApiError(400, "List between 1 and 30 purchased items.");
+  }
+  return rawItems.map((item, index) => {
+    const record = (item ?? {}) as Record<string, unknown>;
+    return {
+      name: cleanString(record.name, `Item ${index + 1}`, 80),
+      quantity: typeof record.quantity === "string" ? record.quantity.trim().slice(0, 40) : "",
+    };
+  });
+}
+
+/** A receipt photo, sent as a data URL. Undefined when none was attached. */
+function parseProof(value: unknown): BazarDocument["proof"] {
+  if (!value || typeof value !== "object") return undefined;
+  const rawProof = value as Record<string, unknown>;
+  const name = cleanString(rawProof.name, "Proof filename", 180);
+  const type = enumValue(
+    rawProof.type,
+    ["image/png", "image/jpeg", "image/webp"] as const,
+    "Proof type",
+  );
+  const data = cleanString(rawProof.data, "Proof image", MAX_PROOF_CHARS + 1);
+  if (data.length > MAX_PROOF_CHARS) {
+    throw new ApiError(413, "That image is too large. Use one under 2 MB.");
+  }
+  if (!data.startsWith(`data:${type};base64,`)) {
+    throw new ApiError(400, "The proof image could not be read.");
+  }
+  return { name, type, data };
+}
+
 function closedMembership(member: MemberDocument, date: string) {
   const membershipPeriods = member.membershipPeriods?.length
     ? member.membershipPeriods.map((entry, index, all) =>
@@ -289,7 +341,8 @@ export async function POST(request: Request) {
 
     if (action === "createMess") {
       const { db, session, user } = await requireSession();
-      await ensureIndexes(db);
+      await ensureIndexesOnce(db);
+      await assertNoOtherActiveMess(db, user.id);
       const name = cleanString(body.name, "Mess name", 80);
       const location = cleanString(body.location, "Location", 120);
       const expectedMembers = Math.round(cleanNumber(body.memberCount, "Expected members", 1, 100));
@@ -353,6 +406,11 @@ export async function POST(request: Request) {
         await setActiveWorkspace(db, session, mess.id, role);
         return Response.json({ status: "joined", messName: mess.name });
       }
+
+      if (mess.suspendedAt) {
+        throw new ApiError(423, "That mess is not accepting new members right now.");
+      }
+      await assertNoOtherActiveMess(db, user.id, mess.id);
 
       if (existing?.status === "requested") {
         return Response.json({ status: "pending", messName: mess.name });
@@ -487,6 +545,13 @@ export async function POST(request: Request) {
         403,
         "The demo account is shared with everyone trying MessMate, so its profile cannot be changed. Sign up for your own account to try this.",
       );
+    }
+    if (!PERSONAL_ACTIONS.has(action)) assertMessWritable(mess);
+    const mutationLimit = rateLimit(`workspace:${user.id}`, MUTATIONS_PER_MINUTE, 60_000);
+    if (!mutationLimit.ok) {
+      throw new ApiError(429, "That is a lot of changes at once. Please wait a moment and try again.", {
+        "Retry-After": String(mutationLimit.retryAfter),
+      });
     }
     const messId = mess.id;
     const settings: MessSettings = {
@@ -821,36 +886,68 @@ export async function POST(request: Request) {
       await assertMonthOpen(db, messId, expense.date);
       const result = await db.collection<ExpenseDocument>("expenses").deleteOne({ id, messId });
       if (!result.deletedCount) throw new ApiError(404, "That expense no longer exists.");
+      await addActivity(
+        db,
+        messId,
+        "Expense deleted",
+        `${user.name} deleted ${expense.title} (BDT ${expense.amount.toLocaleString("en-US")})`,
+        "coral",
+      );
+    } else if (action === "updateExpense") {
+      requireManager(role);
+      const id = cleanString(body.id, "Expense", 100);
+      const existing = await db.collection<ExpenseDocument>("expenses").findOne({ id, messId });
+      if (!existing) throw new ApiError(404, "That expense no longer exists.");
+      // Both months have to be open: the one it leaves and the one it lands in.
+      await assertMonthOpen(db, messId, existing.date);
+      const expense: ExpenseDocument = {
+        ...existing,
+        title: cleanString(body.title, "Expense title", 100),
+        amount: cleanNumber(body.amount, "Amount", 1),
+        category: enumValue(
+          body.category,
+          ["Fixed", "Utility", "Maintenance", "Other"] as const,
+          "Category",
+        ),
+        splitMethod: enumValue(
+          body.splitMethod,
+          ["All members equally", "By room"] as const,
+          "Split method",
+        ),
+        date: dateString(body.date ?? existing.date),
+        createdBy: cleanString(body.paidById ?? existing.createdBy, "Paid by", 100),
+      };
+      await assertMonthOpen(db, messId, expense.date);
+      const payer = await db
+        .collection<MemberDocument>("members")
+        .findOne({ id: expense.createdBy, messId });
+      if (!payer || !memberActiveOn(payer, expense.date)) {
+        throw new ApiError(400, "Choose a member who belonged to the mess on the expense date.");
+      }
+      const [members, rooms] = await Promise.all([
+        db.collection<MemberDocument>("members").find({ messId }).toArray(),
+        db.collection<RoomDocument>("rooms").find({ messId }).toArray(),
+      ]);
+      // The allocation is recalculated for the new amount and date, which is
+      // the whole point of editing rather than deleting and re-adding.
+      expense.shares = allocateExpenseShares(expense, members, rooms);
+      if (!expense.shares.length) {
+        throw new ApiError(409, "No active members can share this expense on that date.");
+      }
+      const { _id: _ignored, ...changes } = expense as ExpenseDocument & { _id?: unknown };
+      await db.collection<ExpenseDocument>("expenses").updateOne({ id, messId }, { $set: changes });
+      await addActivity(
+        db,
+        messId,
+        "Expense edited",
+        existing.amount !== expense.amount
+          ? `${user.name} changed ${expense.title} from BDT ${existing.amount.toLocaleString("en-US")} to BDT ${expense.amount.toLocaleString("en-US")}`
+          : `${user.name} edited ${expense.title}`,
+        "blue",
+      );
     } else if (action === "addBazar") {
-      const rawItems = Array.isArray(body.items) ? body.items : [];
-      if (!rawItems.length || rawItems.length > 30) {
-        throw new ApiError(400, "List between 1 and 30 purchased items.");
-      }
-      const items = rawItems.map((item, index) => {
-        const record = item as Record<string, unknown>;
-        return {
-          name: cleanString(record.name, `Item ${index + 1}`, 80),
-          quantity: typeof record.quantity === "string" ? record.quantity.trim().slice(0, 40) : "",
-        };
-      });
-      let proof: BazarDocument["proof"];
-      if (body.proof && typeof body.proof === "object") {
-        const rawProof = body.proof as Record<string, unknown>;
-        const name = cleanString(rawProof.name, "Proof filename", 180);
-        const type = enumValue(
-          rawProof.type,
-          ["image/png", "image/jpeg", "image/webp"] as const,
-          "Proof type",
-        );
-        const data = cleanString(rawProof.data, "Proof image", MAX_PROOF_CHARS + 1);
-        if (data.length > MAX_PROOF_CHARS) {
-          throw new ApiError(413, "That image is too large. Use one under 2 MB.");
-        }
-        if (!data.startsWith(`data:${type};base64,`)) {
-          throw new ApiError(400, "The proof image could not be read.");
-        }
-        proof = { name, type, data };
-      }
+      const items = parseBazarItems(body.items);
+      const proof = parseProof(body.proof);
       if (settings.requireProof && !proof) {
         throw new ApiError(400, "This mess requires a receipt photo with every bazar entry.");
       }
@@ -911,6 +1008,65 @@ export async function POST(request: Request) {
       if (!result.deletedCount) {
         throw new ApiError(404, "That entry no longer exists, or it is not yours to remove.");
       }
+      await addActivity(
+        db,
+        messId,
+        "Bazar removed",
+        entry.memberId === user.id
+          ? `${user.name} withdrew their BDT ${entry.amount.toLocaleString("en-US")} entry for ${entry.date}`
+          : `${user.name} removed ${entry.by}'s BDT ${entry.amount.toLocaleString("en-US")} entry for ${entry.date}`,
+        "coral",
+      );
+    } else if (action === "updateBazar") {
+      const id = cleanString(body.id, "Bazar entry", 100);
+      const isManager = role === "manager" || role === "admin";
+      const entry = await db.collection<BazarDocument>("bazar").findOne({ id, messId });
+      if (!entry || (!isManager && entry.memberId !== user.id)) {
+        throw new ApiError(404, "That entry no longer exists, or it is not yours to edit.");
+      }
+      await assertMonthOpen(db, messId, entry.date);
+      const date = dateString(body.date ?? entry.date);
+      await assertMonthOpen(db, messId, date);
+      const items = parseBazarItems(body.items);
+      const amount = cleanNumber(body.amount, "Total amount", 1);
+      // A new photo replaces the old one; `removeProof` drops it; otherwise
+      // the receipt already on file stays.
+      const replacement = parseProof(body.proof);
+      const proof = replacement ?? (body.removeProof === true ? undefined : entry.proof);
+      if (settings.requireProof && !proof) {
+        throw new ApiError(400, "This mess requires a receipt photo with every bazar entry.");
+      }
+      const buyer = isManager
+        ? await resolveMealTarget(db, messId, user.id, role, body.memberId ?? entry.memberId)
+        : { id: entry.memberId, name: entry.by };
+      // A member changing an approved figure would change the meal rate
+      // without anyone checking, so their edit goes back for review.
+      const status: BazarDocument["status"] =
+        !isManager && settings.bazarApproval ? "Pending" : entry.status;
+      await db.collection<BazarDocument>("bazar").updateOne(
+        { id, messId },
+        {
+          $set: {
+            date,
+            items,
+            amount,
+            memberId: buyer.id,
+            by: buyer.name,
+            status,
+            ...(proof ? { proof, proofName: proof.name } : {}),
+          },
+          ...(proof ? {} : { $unset: { proof: "", proofName: "" } }),
+        },
+      );
+      await addActivity(
+        db,
+        messId,
+        "Bazar edited",
+        entry.amount !== amount
+          ? `${user.name} changed ${buyer.id === user.id ? "their" : `${buyer.name}'s`} entry from BDT ${entry.amount.toLocaleString("en-US")} to BDT ${amount.toLocaleString("en-US")}`
+          : `${user.name} edited ${buyer.id === user.id ? "their" : `${buyer.name}'s`} entry for ${date}`,
+        "blue",
+      );
     } else if (action === "saveProperty") {
       requireManager(role);
       const incoming = (body.property ?? {}) as Partial<MessProperty>;
@@ -974,28 +1130,66 @@ export async function POST(request: Request) {
     } else if (action === "updateRoom") {
       requireManager(role);
       const id = cleanString(body.id, "Room", 100);
+      const name = cleanString(body.name, "Room name", 60);
+      const capacity = Math.round(cleanNumber(body.capacity, "Capacity", 1, 20));
+      // Shrinking a room below the people already in it would leave the
+      // settlement and the community listing describing a room that is overfull.
+      const residents = await db
+        .collection<MemberDocument>("members")
+        .countDocuments({ messId, roomId: id, status: "active" });
+      if (capacity < residents) {
+        throw new ApiError(
+          409,
+          `${residents} ${residents === 1 ? "person lives" : "people live"} in this room, so it needs room for at least ${residents}.`,
+        );
+      }
       const result = await db.collection<RoomDocument>("rooms").updateOne(
         { id, messId },
         {
           $set: {
-            name: cleanString(body.name, "Room name", 60),
+            name,
             type: cleanString(body.type || "Shared room", "Room description", 80),
             rent: cleanNumber(body.rent, "Monthly rent", 0),
-            capacity: Math.round(cleanNumber(body.capacity, "Capacity", 1, 20)),
+            capacity,
             ...roomFeatures(body),
           },
         },
       );
       if (!result.matchedCount) throw new ApiError(404, "That room no longer exists.");
       await revalidateListingsFor(db, messId);
+      await addActivity(db, messId, "Room updated", `${user.name} updated ${name}`, "blue");
     } else if (action === "deleteRoom") {
       requireManager(role);
       const id = cleanString(body.id, "Room", 100);
       if (await db.collection<MemberDocument>("members").findOne({ messId, roomId: id, status: "active" })) {
         throw new ApiError(409, "Move the residents out before deleting this room.");
       }
-      const result = await db.collection<RoomDocument>("rooms").deleteOne({ id, messId });
-      if (!result.deletedCount) throw new ApiError(404, "That room no longer exists.");
+      const room = await db.collection<RoomDocument>("rooms").findOne({ id, messId });
+      if (!room) throw new ApiError(404, "That room no longer exists.");
+      await db.collection<RoomDocument>("rooms").deleteOne({ id, messId });
+      // A post advertising a room that no longer exists would stay public with
+      // nothing behind it, so its posts and their photos go with it.
+      const orphaned = await db
+        .collection<ListingDocument>("listings")
+        .find({ messId, roomId: id }, { projection: { id: 1, slug: 1 } })
+        .toArray();
+      if (orphaned.length) {
+        const listingIds = orphaned.map((listing) => listing.id);
+        await db.collection<ListingDocument>("listings").deleteMany({ messId, id: { $in: listingIds } });
+        await db
+          .collection<ListingPhotoDocument>("listingPhotos")
+          .deleteMany({ messId, listingId: { $in: listingIds } });
+        for (const listing of orphaned) revalidateCommunity(listing.slug);
+      }
+      await addActivity(
+        db,
+        messId,
+        "Room removed",
+        orphaned.length
+          ? `${user.name} removed ${room.name} and its ${orphaned.length === 1 ? "listing" : "listings"}`
+          : `${user.name} removed ${room.name}`,
+        "coral",
+      );
     } else if (action === "assignMember") {
       requireManager(role);
       const memberId = cleanString(body.memberId, "Member", 100);
@@ -1066,6 +1260,16 @@ export async function POST(request: Request) {
         .collection<MemberDocument>("members")
         .findOne({ id, messId, status: "requested" });
       if (!pending) throw new ApiError(404, "That request no longer exists.");
+      if (pending.userId) {
+        try {
+          await assertNoOtherActiveMess(db, pending.userId, messId);
+        } catch {
+          throw new ApiError(
+            409,
+            `${pending.name} has since joined another mess, so they cannot be added here. Decline the request instead.`,
+          );
+        }
+      }
 
       // A room can be chosen at the same time, which is the usual next step.
       let roomId: string | null = null;
@@ -1238,6 +1442,12 @@ export async function POST(request: Request) {
       );
       // A member asking to publish is asking the manager to publish.
       const status = !isManager && requested === "published" ? "pending" : requested;
+      if (existing?.moderation?.removedAt && status !== "draft") {
+        throw new ApiError(
+          403,
+          "The MessMate team took this post down, so it cannot go public again. You can still edit it as a draft.",
+        );
+      }
 
       const preferences = mergePreferences(body.preferences as Partial<TenantPreferences>);
       const contactEmail = optionalText(body.contactEmail, 180);
@@ -1290,6 +1500,7 @@ export async function POST(request: Request) {
         contactPhone: optionalText(body.contactPhone, 40),
         contactEmail: contactEmail ? cleanEmail(contactEmail) : "",
         publishedAt: status === "published" ? (existing?.publishedAt ?? now) : (existing?.publishedAt ?? null),
+        moderation: existing?.moderation ?? null,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
@@ -1421,6 +1632,9 @@ export async function POST(request: Request) {
       if (!listing.contactPhone && !listing.contactEmail) {
         throw new ApiError(400, "That post has no contact details, so it cannot go public.");
       }
+      if (listing.moderation?.removedAt) {
+        throw new ApiError(403, "The MessMate team took this post down, so it cannot go public again.");
+      }
       const now = new Date().toISOString();
       await db
         .collection<ListingDocument>("listings")
@@ -1516,6 +1730,82 @@ export async function POST(request: Request) {
         `${user.name} replaced the private join code`,
         "coral",
       );
+    } else if (action === "renameMess") {
+      requireManager(role);
+      const name = cleanString(body.name, "Mess name", 80);
+      const location = cleanString(body.location, "Location", 120);
+      await db.collection<MessDocument>("messes").updateOne({ id: messId }, { $set: { name, location } });
+      await revalidateListingsFor(db, messId);
+      if (name !== mess.name) {
+        await addActivity(db, messId, "Mess renamed", `${user.name} renamed ${mess.name} to ${name}`, "blue");
+      }
+    } else if (action === "transferOwnership") {
+      // The owner is the one manager who cannot be demoted or removed, so only
+      // they can hand that on — and only to someone with an account.
+      if (mess.managerId !== user.id) {
+        throw new ApiError(403, "Only the person who owns this mess can hand it on.");
+      }
+      const password = cleanString(body.currentPassword, "Current password", 200);
+      if (!(await verifyPassword(password, user.passwordSalt, user.passwordHash))) {
+        throw new ApiError(403, "That password is not correct.");
+      }
+      const targetId = cleanString(body.memberId, "New owner", 100);
+      if (targetId === user.id) throw new ApiError(400, "You already own this mess.");
+      const target = await db
+        .collection<MemberDocument>("members")
+        .findOne({ id: targetId, messId, status: "active" });
+      if (!target?.userId) {
+        throw new ApiError(404, "Choose an active member who has signed in to MessMate.");
+      }
+      await db.collection<MessDocument>("messes").updateOne({ id: messId }, { $set: { managerId: target.id } });
+      await db
+        .collection<MemberDocument>("members")
+        .updateOne({ id: target.id, messId }, { $set: { role: "Manager" } });
+      await db
+        .collection("sessions")
+        .updateMany({ userId: target.userId, activeMessId: messId }, { $set: { role: "manager" } });
+      mess.managerId = target.id;
+      await addActivity(
+        db,
+        messId,
+        "Ownership transferred",
+        `${user.name} handed ownership of ${mess.name} to ${target.name}`,
+        "coral",
+      );
+    } else if (action === "saveNotice") {
+      requireManager(role);
+      const title = cleanString(body.title, "Notice title", 120);
+      const text = optionalText(body.body, 2000);
+      const pinned = Boolean(body.pinned);
+      const now = new Date().toISOString();
+      if (typeof body.id === "string" && body.id) {
+        const result = await db
+          .collection<NoticeDocument>("notices")
+          .updateOne({ id: body.id, messId }, { $set: { title, body: text, pinned, updatedAt: now } });
+        if (!result.matchedCount) throw new ApiError(404, "That notice no longer exists.");
+      } else {
+        const count = await db.collection<NoticeDocument>("notices").countDocuments({ messId });
+        if (count >= 50) {
+          throw new ApiError(409, "The notice board is full. Remove an old notice first.");
+        }
+        await db.collection<NoticeDocument>("notices").insertOne({
+          id: newId("notice"),
+          messId,
+          title,
+          body: text,
+          pinned,
+          authorId: user.id,
+          authorName: user.name,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await addActivity(db, messId, "Notice posted", `${user.name} posted “${title}”`, "blue");
+      }
+    } else if (action === "deleteNotice") {
+      requireManager(role);
+      const id = cleanString(body.id, "Notice", 100);
+      const result = await db.collection<NoticeDocument>("notices").deleteOne({ id, messId });
+      if (!result.deletedCount) throw new ApiError(404, "That notice no longer exists.");
     } else if (action === "updateProfile") {
       const name = cleanString(body.name, "Full name", 80);
       const phone = optionalText(body.phone, 40);

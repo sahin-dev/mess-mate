@@ -225,8 +225,17 @@ export function ListingsTab() {
                           ` · ${pluralize(listing.photos.length, "photo")}`}
                       </small>
                     </div>
-                    <span className={`status-pill ${pill.className}`}>{pill.label}</span>
+                    <span className={`status-pill ${listing.moderation ? "rejected" : pill.className}`}>
+                      {listing.moderation ? "Taken down" : pill.label}
+                    </span>
                   </div>
+                  {listing.moderation && (
+                    <p className="listing-moderation" role="note">
+                      The MessMate team took this post down
+                      {listing.moderation.reason ? `: ${listing.moderation.reason}` : "."} It can be
+                      edited as a draft but cannot go public again.
+                    </p>
+                  )}
 
                   <div className="listing-actions">
                     {listing.status === "published" && (
@@ -599,10 +608,16 @@ function ListingModal({
             {publish && !canPublish && (
               <p className="field-error">Add a phone number or an email first.</p>
             )}
+            {listing?.moderation && (
+              <p className="field-error">The MessMate team took this post down, so it stays a draft.</p>
+            )}
           </div>
           <Toggle
             checked={publish}
-            onChange={() => setPublish((value) => !value)}
+            onChange={() => {
+              // A post the platform team removed stays a draft.
+              if (!listing?.moderation) setPublish((value) => !value);
+            }}
             label={isManager ? "Publish to the community" : "Send to your manager"}
           />
         </div>

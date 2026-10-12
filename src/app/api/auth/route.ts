@@ -1,4 +1,4 @@
-import { ensureIndexes, getDemoIdentity, type MemberDocument } from "@/lib/data";
+import { ensureIndexesOnce, getDemoIdentity, type MemberDocument } from "@/lib/data";
 import { after } from "next/server";
 import { passwordResetEmail, welcomeEmail } from "@/lib/email-templates";
 import { demoEnabled } from "@/lib/env";
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
     }
 
     const db = await getDb();
-    await ensureIndexes(db);
+    await ensureIndexesOnce(db);
 
     if (action === "demo") {
       if (!demoEnabled()) {
@@ -149,6 +149,13 @@ export async function POST(request: Request) {
       if (!(await verifyPassword(password, user.passwordSalt, user.passwordHash))) {
         throw new ApiError(401, "That email and password do not match an account.");
       }
+      // Only said after the password matched, so it reveals nothing to a guesser.
+      if (user.suspendedAt) {
+        throw new ApiError(
+          403,
+          "This account has been suspended by the MessMate team. Reply to any MessMate email if you think this is a mistake.",
+        );
+      }
 
       // Reconnect the account to whichever mess it already belongs to.
       let role: UserRole | null = user.isAdmin ? "admin" : null;
@@ -175,7 +182,7 @@ export async function POST(request: Request) {
     if (action === "forgot") {
       const email = cleanEmail(body.email);
       const user = await db.collection<UserDocument>("users").findOne({ email });
-      if (user) {
+      if (user && !user.suspendedAt) {
         const token = await createResetToken(db, user.id);
         after(async () => {
           const result = await sendMail(
@@ -206,6 +213,9 @@ export async function POST(request: Request) {
       const record = await consumeResetToken(db, token);
       if (!record) {
         throw new ApiError(400, "That reset link has expired or has already been used.");
+      }
+      if (record.user.suspendedAt) {
+        throw new ApiError(403, "This account has been suspended by the MessMate team.");
       }
       const credentials = await hashPassword(password);
       await db

@@ -117,13 +117,27 @@ export type ListingFilters = {
   airConditioned?: boolean;
 };
 
+/**
+ * What "visible to the public" means: published, and not in a mess the
+ * platform team has suspended. Suspension hides a post without unpublishing
+ * it, so restoring the mess brings its posts straight back.
+ */
+async function publicListingFilter(db: Db) {
+  const suspended = await db
+    .collection<MessDocument>("messes")
+    .distinct("id", { suspendedAt: { $type: "string" } });
+  return suspended.length
+    ? { status: "published" as const, messId: { $nin: suspended } }
+    : { status: "published" as const };
+}
+
 /** Newest first, capped — the community index is a browse, not an export. */
 export async function loadPublishedListings(
   db: Db,
   limit = 60,
   filters: ListingFilters = {},
 ): Promise<PublicListingCard[]> {
-  const query: Record<string, unknown> = { status: "published" };
+  const query: Record<string, unknown> = await publicListingFilter(db);
   if (filters.maxRent) query.rentPerSeat = { $lte: filters.maxRent };
   if (filters.seats) query.seats = { $gte: filters.seats };
 
@@ -229,7 +243,7 @@ export async function loadListingAreas(db: Db) {
   // made this the slowest query on the page by a wide margin.
   const listings = await db
     .collection<ListingDocument>("listings")
-    .find({ status: "published" }, { projection: { messId: 1 } })
+    .find(await publicListingFilter(db), { projection: { messId: 1 } })
     .limit(500)
     .toArray();
   if (!listings.length) return [];
@@ -275,7 +289,7 @@ async function publicAvatarId(db: Db, authorId: string | undefined) {
 export async function loadPublishedListing(db: Db, slug: string): Promise<PublicListing | null> {
   const listing = await db
     .collection<ListingDocument>("listings")
-    .findOne({ slug, status: "published" });
+    .findOne({ slug, ...(await publicListingFilter(db)) });
   if (!listing) return null;
 
   const [mess, stored] = await Promise.all([
@@ -417,5 +431,5 @@ async function summariseCosts(
 
 /** The real number of published rooms, for copy that quotes a total. */
 export async function countPublishedListings(db: Db): Promise<number> {
-  return db.collection<ListingDocument>("listings").countDocuments({ status: "published" });
+  return db.collection<ListingDocument>("listings").countDocuments(await publicListingFilter(db));
 }

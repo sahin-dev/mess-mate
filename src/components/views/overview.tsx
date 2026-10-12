@@ -28,6 +28,7 @@ import { daysLeftInPeriod, periodLabel } from "@/lib/period";
 import { cutoffHasPassed, periodInZone, todayInZone } from "@/lib/timezone";
 import type { Expense, MealEntry, MealKey, Member, WorkspaceData } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState } from "@/components/ui";
+import { NoticeBoard } from "@/components/notice-board";
 import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
 const MEAL_KEYS: MealKey[] = ["breakfast", "lunch", "dinner"];
@@ -212,6 +213,7 @@ export function OverviewView({ onAddExpense }: { onAddExpense: () => void }) {
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
+          <NoticeBoard />
           <PersonalSpendOverview spend={personalSpend} />
           <TodayMeals />
           <RateTrend />

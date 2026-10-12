@@ -92,6 +92,12 @@ export type Workspace = {
   /** Null when the account has no picture and initials are shown instead. */
   userAvatarId: string | null;
   memberCount: number;
+  /** The account that created the mess. Only it can hand the mess on. */
+  isOwner: boolean;
+  /** Member id of the owner, who cannot be demoted or removed. */
+  ownerId: string;
+  /** Suspended by a platform administrator: readable, but nothing can change. */
+  suspended: boolean;
 };
 
 export type Member = {
@@ -242,6 +248,13 @@ export type Listing = {
   contactEmail: string;
   publishedAt: string | null;
   updatedAt: string;
+  /** Set when a platform administrator takes the post down. */
+  moderation: ListingModeration | null;
+};
+
+export type ListingModeration = {
+  removedAt: string;
+  reason: string;
 };
 
 export type MealEntry = Record<MealKey, number> & {
@@ -384,7 +397,42 @@ export type WorkspaceData = {
    * someone else. Only sent to managers; members receive their own in `meals`.
    */
   memberMeals: Record<string, MealEntry[]>;
+  /** The mess notice board, pinned first and then newest first. */
+  notices: Notice[];
+  /** Platform announcements currently running for this account. */
+  announcements: AnnouncementBanner[];
 };
+
+/** A note a manager pins up for the whole house: "Water off Sunday 10–2". */
+export type Notice = {
+  id: string;
+  title: string;
+  body: string;
+  pinned: boolean;
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AnnouncementTone = "info" | "warning" | "success";
+export type AnnouncementAudience = "everyone" | "managers";
+
+/** A message from the platform team, shown across the top of every workspace. */
+export type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+  tone: AnnouncementTone;
+  audience: AnnouncementAudience;
+  startsAt: string;
+  /** Null runs until an administrator ends it. */
+  endsAt: string | null;
+  createdAt: string;
+  createdBy: string;
+};
+
+export type AnnouncementBanner = Pick<Announcement, "id" | "title" | "body" | "tone">;
 
 /** What the signed-in user sees before they belong to a mess. */
 export type PendingRequest = {
@@ -399,7 +447,8 @@ export type AuthResponse = {
   workspace: Workspace | null;
 };
 
-export type AdminData = {
+/** The admin overview: platform-wide counts and what needs attention. */
+export type AdminOverview = {
   stats: {
     users: number;
     messes: number;
@@ -408,6 +457,7 @@ export type AdminData = {
     bazar: number;
     rooms: number;
     activeMesses: number;
+    publishedListings: number;
     /**
      * Accounts whose tab reported in within the presence window: people
      * actually looking at the site. Not the same as holding a session, which
@@ -425,27 +475,175 @@ export type AdminData = {
      */
     activityPartial: boolean;
   };
-  messes: {
-    id: string;
-    name: string;
-    manager: string;
-    members: number;
-    entries: number;
-    location: string;
-    createdAt: string;
-    status: "Active" | "Setup";
-  }[];
-  users: {
-    id: string;
-    name: string;
-    email: string;
-    role: "Admin" | "Manager" | "Member";
-    messes: number;
-    joinedAt: string;
-  }[];
+  /** Work waiting on a platform administrator. */
+  queue: {
+    openReports: number;
+    suspendedUsers: number;
+    suspendedMesses: number;
+    runningAnnouncements: number;
+  };
   signups: { period: Period; label: string; users: number; messes: number }[];
   featureUsage: { label: string; count: number; share: number }[];
-  activity: ActivityItem[];
+  recentMesses: AdminMessRow[];
+  activity: AdminActivityRow[];
+  /** Configuration problems worth fixing before (or after) going live. */
+  warnings: AdminHealthCheck[];
   databaseLatency: number;
+  generatedAt: string;
+};
+
+export type AdminPage<T> = {
+  rows: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type AdminUserRole = "Admin" | "Manager" | "Member" | "No mess";
+
+export type AdminUserRow = {
+  id: string;
+  name: string;
+  email: string;
+  role: AdminUserRole;
+  messId: string | null;
+  messName: string | null;
+  joinedAt: string;
+  lastSeenAt: string | null;
+  suspended: boolean;
+  suspendedReason: string;
+  /** The shared demo accounts cannot be suspended or demoted. */
+  isDemo: boolean;
+  isSelf: boolean;
+};
+
+export type AdminUserDetail = AdminUserRow & {
+  phone: string;
+  sessions: number;
+  memberships: {
+    messId: string;
+    messName: string;
+    role: string;
+    status: string;
+    joinedAt: string;
+    leftAt: string | null;
+  }[];
+  listings: number;
+  audit: AdminAuditRow[];
+};
+
+export type AdminMessStatus = "Active" | "Setup" | "Suspended";
+
+export type AdminMessRow = {
+  id: string;
+  name: string;
+  manager: string;
+  managerEmail: string;
+  members: number;
+  entries: number;
+  location: string;
+  createdAt: string;
+  lastActivityAt: string | null;
+  status: AdminMessStatus;
+  suspendedReason: string;
+};
+
+export type AdminMessDetail = AdminMessRow & {
+  joinCode: string;
+  timezone: string;
+  rooms: number;
+  closedMonths: number;
+  counts: { meals: number; bazar: number; expenses: number; listings: number };
+  roster: {
+    id: string;
+    userId: string | null;
+    name: string;
+    email: string;
+    role: string;
+    status: string;
+    joinedAt: string;
+  }[];
+  activity: AdminActivityRow[];
+};
+
+export type AdminListingRow = {
+  id: string;
+  slug: string;
+  title: string;
+  roomName: string;
+  messId: string;
+  messName: string;
+  status: ListingStatus;
+  authorName: string;
+  publishedAt: string | null;
+  updatedAt: string;
+  openReports: number;
+  /** Taken down by a platform administrator; the manager cannot republish it. */
+  removedByAdmin: boolean;
+  removalReason: string;
+};
+
+export type ListingReportReason =
+  | "scam"
+  | "unavailable"
+  | "misleading"
+  | "discriminatory"
+  | "offensive"
+  | "other";
+
+export type AdminReportRow = {
+  id: string;
+  listingId: string;
+  listingTitle: string;
+  slug: string;
+  messName: string;
+  reason: ListingReportReason;
+  details: string;
+  contact: string;
+  status: "open" | "actioned" | "dismissed";
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+};
+
+export type AdminAuditRow = {
+  id: string;
+  actorName: string;
+  action: string;
+  targetType: "user" | "mess" | "listing" | "report" | "announcement" | "platform";
+  targetId: string | null;
+  targetLabel: string;
+  detail: string;
+  createdAt: string;
+};
+
+export type AdminActivityRow = ActivityItem & { messId: string; messName: string };
+
+export type AdminAnnouncementRow = Announcement & {
+  state: "scheduled" | "running" | "ended";
+};
+
+export type AdminHealthCheck = {
+  id: string;
+  label: string;
+  status: "ok" | "warn" | "error";
+  detail: string;
+};
+
+export type AdminHealth = {
+  checks: AdminHealthCheck[];
+  database: {
+    latencyMs: number;
+    name: string;
+    dataSizeBytes: number | null;
+    storageSizeBytes: number | null;
+    collections: { name: string; documents: number }[];
+  };
+  runtime: {
+    node: string;
+    uptimeSeconds: number;
+    memoryMb: number;
+    environment: string;
+  };
   generatedAt: string;
 };

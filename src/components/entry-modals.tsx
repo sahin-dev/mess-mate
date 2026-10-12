@@ -4,22 +4,26 @@ import { Clock3, ImagePlus, Plus, Trash2, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { formatMoney } from "@/lib/format";
 import { todayInZone } from "@/lib/timezone";
-import type { ExpenseCategory, SplitMethod } from "@/lib/types";
+import type { BazarEntry, Expense, ExpenseCategory, SplitMethod } from "@/lib/types";
 import { ActionButton, Modal } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace-context";
 
 const MAX_PROOF_BYTES = 2 * 1024 * 1024;
 
-export function AddExpenseModal({ onClose }: { onClose: () => void }) {
+/** Adds a shared bill, or edits one when `expense` is given. */
+export function AddExpenseModal({ onClose, expense }: { onClose: () => void; expense?: Expense }) {
   const { data, runAction, busy, notify } = useWorkspace();
-  const activeMembers = data.members.filter((member) => member.status === "active");
+  const editing = Boolean(expense);
+  const activeMembers = data.members.filter(
+    (member) => member.status === "active" || member.id === expense?.paidById,
+  );
   const [form, setForm] = useState({
-    title: "",
-    amount: "",
-    category: "Utility" as ExpenseCategory,
-    splitMethod: "All members equally" as SplitMethod,
-    date: todayInZone(data.settings.timezone),
-    paidById: data.workspace.userId,
+    title: expense?.title ?? "",
+    amount: expense ? String(expense.amount) : "",
+    category: (expense?.category ?? "Utility") as ExpenseCategory,
+    splitMethod: (expense?.splitMethod ?? "All members equally") as SplitMethod,
+    date: expense?.date ?? todayInZone(data.settings.timezone),
+    paidById: expense?.paidById ?? data.workspace.userId,
   });
 
   const amount = Number(form.amount) || 0;
@@ -37,17 +41,21 @@ export function AddExpenseModal({ onClose }: { onClose: () => void }) {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const result = await runAction(
-      "addExpense",
-      { ...form, amount },
-      `${form.title} added to the month.`,
+      editing ? "updateExpense" : "addExpense",
+      { ...form, amount, id: expense?.id },
+      editing ? `${form.title} updated and re-split.` : `${form.title} added to the month.`,
     );
     if (result) onClose();
   };
 
   return (
     <Modal
-      title="Add a shared expense"
-      subtitle="Rent, bills and one-off costs. Bazar is recorded separately."
+      title={editing ? "Edit shared expense" : "Add a shared expense"}
+      subtitle={
+        editing
+          ? "Saving recalculates everyone's share for the new amount and date."
+          : "Rent, bills and one-off costs. Bazar is recorded separately."
+      }
       onClose={onClose}
     >
       <form onSubmit={submit}>
@@ -152,14 +160,14 @@ export function AddExpenseModal({ onClose }: { onClose: () => void }) {
           </button>
           <ActionButton
             busy={busy}
-            busyLabel="Adding…"
+            busyLabel={editing ? "Saving…" : "Adding…"}
             type="submit"
             disabled={!form.title.trim() || amount <= 0}
             onClick={() => {
               if (amount > 0 && amount < 1) notify("Amounts under 1 taka are not recorded.", "error");
             }}
           >
-            Add expense
+            {editing ? "Save changes" : "Add expense"}
           </ActionButton>
         </div>
       </form>
@@ -167,18 +175,25 @@ export function AddExpenseModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function AddBazarModal({ onClose }: { onClose: () => void }) {
+/** Adds a bazar run, or edits one when `entry` is given. */
+export function AddBazarModal({ onClose, entry }: { onClose: () => void; entry?: BazarEntry }) {
   const { data, runAction, busy, notify, isManager } = useWorkspace();
+  const editing = Boolean(entry);
   const activeMembers = data.members.filter((member) => member.status === "active");
   // A manager often records the run someone else did and was paid back for.
-  const [buyerId, setBuyerId] = useState(data.workspace.userId);
-  const [items, setItems] = useState([{ name: "", quantity: "" }]);
-  const [date, setDate] = useState(todayInZone(data.settings.timezone));
-  const [amount, setAmount] = useState("");
+  const [buyerId, setBuyerId] = useState(entry?.memberId ?? data.workspace.userId);
+  const [items, setItems] = useState(
+    entry?.items.length ? entry.items.map((item) => ({ ...item })) : [{ name: "", quantity: "" }],
+  );
+  const [date, setDate] = useState(entry?.date ?? todayInZone(data.settings.timezone));
+  const [amount, setAmount] = useState(entry ? String(entry.amount) : "");
   const [proof, setProof] = useState<{ name: string; type: string; data: string } | null>(null);
+  // An entry being edited may already have a receipt on file.
+  const [keepExistingProof, setKeepExistingProof] = useState(Boolean(entry?.hasProof));
 
   const total = Number(amount) || 0;
-  const needsProof = data.settings.requireProof && !proof;
+  const needsProof = data.settings.requireProof && !proof && !keepExistingProof;
+  const resubmits = editing && !isManager && data.settings.bazarApproval;
 
   const pickProof = (file: File | undefined) => {
     if (!file) {
@@ -206,17 +221,33 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
       return;
     }
     const result = await runAction(
-      "addBazar",
-      { date, amount: total, items, proof: proof ?? undefined, memberId: buyerId },
-      data.settings.bazarApproval ? "Bazar submitted for approval." : "Bazar added.",
+      editing ? "updateBazar" : "addBazar",
+      {
+        id: entry?.id,
+        date,
+        amount: total,
+        items,
+        proof: proof ?? undefined,
+        removeProof: editing && !proof && !keepExistingProof,
+        memberId: buyerId,
+      },
+      editing
+        ? resubmits
+          ? "Changes saved and sent back for approval."
+          : "Bazar entry updated."
+        : data.settings.bazarApproval
+          ? "Bazar submitted for approval."
+          : "Bazar added.",
     );
     if (result) onClose();
   };
 
+  const proofLabel = proof?.name ?? (keepExistingProof ? (entry?.proofName ?? "Receipt on file") : null);
+
   return (
     <Modal
-      title="Add a bazar run"
-      subtitle="List what you bought and the total you paid."
+      title={editing ? "Edit bazar entry" : "Add a bazar run"}
+      subtitle={editing ? "Correct the items, the total or the date." : "List what you bought and the total you paid."}
       onClose={onClose}
     >
       <form onSubmit={submit}>
@@ -315,11 +346,11 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
           </button>
         </fieldset>
 
-        <div className={`proof-upload ${proof ? "has-file" : ""}`}>
+        <div className={`proof-upload ${proofLabel ? "has-file" : ""}`}>
           <label>
             <ImagePlus size={21} aria-hidden="true" />
             <span>
-              <strong>{proof?.name ?? "Attach the receipt"}</strong>
+              <strong>{proofLabel ?? "Attach the receipt"}</strong>
               <small>
                 {data.settings.requireProof ? "Required by your mess" : "Optional"} &middot; PNG, JPG
                 or WebP up to 2 MB
@@ -332,8 +363,15 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
               onChange={(event) => pickProof(event.target.files?.[0])}
             />
           </label>
-          {proof && (
-            <button type="button" onClick={() => setProof(null)} aria-label="Remove the attached receipt">
+          {proofLabel && (
+            <button
+              type="button"
+              onClick={() => {
+                setProof(null);
+                setKeepExistingProof(false);
+              }}
+              aria-label="Remove the attached receipt"
+            >
               <X size={16} aria-hidden="true" />
             </button>
           )}
@@ -344,9 +382,13 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
           <p>
             {buyerId !== data.workspace.userId &&
               `Recorded as bought by ${activeMembers.find((m) => m.id === buyerId)?.name}, so they are credited for it. `}
-            {data.settings.bazarApproval
-              ? "A manager reviews this before it counts towards the meal rate."
-              : "This counts towards the meal rate straight away."}
+            {resubmits
+              ? "Saving sends this entry back to a manager for approval."
+              : editing
+                ? "The meal rate updates as soon as you save."
+                : data.settings.bazarApproval
+                  ? "A manager reviews this before it counts towards the meal rate."
+                  : "This counts towards the meal rate straight away."}
           </p>
         </div>
 
@@ -356,11 +398,11 @@ export function AddBazarModal({ onClose }: { onClose: () => void }) {
           </button>
           <ActionButton
             busy={busy}
-            busyLabel="Submitting…"
+            busyLabel={editing ? "Saving…" : "Submitting…"}
             type="submit"
             disabled={total <= 0 || !items[0].name.trim()}
           >
-            Submit bazar
+            {editing ? "Save changes" : "Submit bazar"}
           </ActionButton>
         </div>
       </form>

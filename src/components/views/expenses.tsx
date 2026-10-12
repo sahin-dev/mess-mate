@@ -7,6 +7,7 @@ import {
   Home,
   Lightbulb,
   LockKeyhole,
+  Pencil,
   Plus,
   ReceiptText,
   Trash2,
@@ -19,6 +20,7 @@ import { downloadCsv, formatDate, formatMoney, pluralize, signedMoney } from "@/
 import { periodLabel } from "@/lib/period";
 import type { Expense } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState, Modal, SectionHeading } from "@/components/ui";
+import { AddExpenseModal } from "@/components/entry-modals";
 import { usePeriodHref, useWorkspace } from "@/components/workspace-context";
 
 const CATEGORY_ICON = {
@@ -42,6 +44,7 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
   const [category, setCategory] = useState("All");
   const [reopening, setReopening] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
+  const [editing, setEditing] = useState<Expense | null>(null);
 
   const { settlement } = data;
   const rows = data.expenses.filter((expense) => category === "All" || expense.category === category);
@@ -378,16 +381,28 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
                     <span className="share-badge">{share}</span>
                     <strong className="expense-amount">{formatMoney(expense.amount)}</strong>
                     {isManager && !closed ? (
-                      <button
-                        type="button"
-                        className="icon-action danger"
-                        disabled={busy}
-                        title={`Delete ${expense.title}`}
-                        aria-label={`Delete ${expense.title}`}
-                        onClick={() => removeExpense(expense)}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
+                      <span className="row-actions">
+                        <button
+                          type="button"
+                          className="icon-action"
+                          disabled={busy}
+                          title={`Edit ${expense.title}`}
+                          aria-label={`Edit ${expense.title}`}
+                          onClick={() => setEditing(expense)}
+                        >
+                          <Pencil size={15} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-action danger"
+                          disabled={busy}
+                          title={`Delete ${expense.title}`}
+                          aria-label={`Delete ${expense.title}`}
+                          onClick={() => removeExpense(expense)}
+                        >
+                          <Trash2 size={16} aria-hidden="true" />
+                        </button>
+                      </span>
                     ) : (
                       <span />
                     )}
@@ -437,6 +452,9 @@ export function ExpensesView({ onAddExpense }: { onAddExpense: () => void }) {
             </ActionButton>
           </div>
         </Modal>
+      )}
+      {editing && !closed && (
+        <AddExpenseModal key={editing.id} expense={editing} onClose={() => setEditing(null)} />
       )}
     </>
   );

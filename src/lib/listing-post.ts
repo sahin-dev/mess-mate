@@ -198,5 +198,8 @@ export function mergeListing(
     contactEmail: stored.contactEmail ?? "",
     publishedAt: stored.publishedAt ?? null,
     updatedAt: stored.updatedAt ?? "",
+    moderation: stored.moderation?.removedAt
+      ? { removedAt: stored.moderation.removedAt, reason: stored.moderation.reason ?? "" }
+      : null,
   };
 }

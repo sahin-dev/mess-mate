@@ -5,6 +5,8 @@ import {
   Check,
   CircleDollarSign,
   Clock3,
+  Crown,
+  House,
   KeyRound,
   Plus,
   ShoppingBasket,
@@ -12,7 +14,7 @@ import {
   Trash2,
   Utensils,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { formatMoney } from "@/lib/format";
 import {
   browserTimezone,
@@ -138,16 +140,10 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
                 </button>
               </div>
             </div>
-            <div className="setting-row">
-              <div>
-                <strong>Mess name</strong>
-                <p>
-                  {data.workspace.messName} &middot; {data.workspace.location}
-                </p>
-              </div>
-            </div>
           </section>
         )}
+        {tab === "general" && <MessIdentity />}
+        {tab === "general" && data.workspace.isOwner && <OwnershipTransfer />}
 
         {tab === "meals" && (
           <section className="panel settings-section">
@@ -479,6 +475,141 @@ function SettingsForm({ serverSnapshot }: { serverSnapshot: string }) {
         </ActionButton>
       </div>
     </>
+  );
+}
+
+/** The mess's name and the short location shown under it everywhere. */
+function MessIdentity() {
+  const { data, runAction, busy } = useWorkspace();
+  const [name, setName] = useState(data.workspace.messName);
+  const [location, setLocation] = useState(data.workspace.location);
+  const dirty = name.trim() !== data.workspace.messName || location.trim() !== data.workspace.location;
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    await runAction("renameMess", { name, location }, "Mess details saved.");
+  };
+
+  return (
+    <section className="panel settings-section">
+      <div className="settings-heading">
+        <span className="settings-icon green" aria-hidden="true">
+          <House size={21} />
+        </span>
+        <div>
+          <h3>Name and location</h3>
+          <p>How the mess appears to members, in invitations and on any public post.</p>
+        </div>
+      </div>
+      <form className="settings-inline-form" onSubmit={save}>
+        <div className="form-grid">
+          <label>
+            Mess name
+            <input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label>
+            Area and city
+            <input
+              required
+              maxLength={120}
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              placeholder="e.g. Dhanmondi, Dhaka"
+            />
+          </label>
+        </div>
+        <div className="view-actions">
+          <ActionButton busy={busy} busyLabel="Saving…" type="submit" disabled={!dirty || !name.trim() || !location.trim()}>
+            Save details
+          </ActionButton>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+/**
+ * The owner is the one manager who cannot be removed or demoted, which also
+ * means they cannot leave. Handing ownership on is how they get out.
+ */
+function OwnershipTransfer() {
+  const { data, runAction, busy } = useWorkspace();
+  const candidates = data.members.filter(
+    (member) => member.status === "active" && member.id !== data.workspace.userId,
+  );
+  const [memberId, setMemberId] = useState("");
+  const [password, setPassword] = useState("");
+  const target = candidates.find((member) => member.id === memberId);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const result = await runAction(
+      "transferOwnership",
+      { memberId, currentPassword: password },
+      `${target?.name ?? "They"} now own${target ? "s" : ""} the mess.`,
+    );
+    if (result) {
+      setMemberId("");
+      setPassword("");
+    }
+  };
+
+  return (
+    <section className="panel settings-section danger-zone">
+      <div className="settings-heading">
+        <span className="settings-icon coral" aria-hidden="true">
+          <Crown size={21} />
+        </span>
+        <div>
+          <h3>Hand over ownership</h3>
+          <p>
+            You own this mess, so you cannot be removed and cannot leave. Make someone else the owner
+            first if you are moving out. You stay a manager until they change that.
+          </p>
+        </div>
+      </div>
+      {candidates.length === 0 ? (
+        <p className="muted-note">Invite at least one housemate before you can hand the mess on.</p>
+      ) : (
+        <form className="settings-inline-form" onSubmit={submit}>
+          <div className="form-grid">
+            <label>
+              New owner
+              <select required value={memberId} onChange={(event) => setMemberId(event.target.value)}>
+                <option value="">Choose a member…</option>
+                {candidates.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}
+                    {member.role === "Manager" ? " (manager)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Your password
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="view-actions">
+            <ActionButton
+              busy={busy}
+              busyLabel="Transferring…"
+              type="submit"
+              className="button button-danger"
+              disabled={!memberId || !password}
+            >
+              Transfer ownership
+            </ActionButton>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 

@@ -11,6 +11,7 @@ import {
   Gauge,
   Home,
   LogOut,
+  Megaphone,
   Menu,
   MoreHorizontal,
   Plus,
@@ -305,6 +306,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
 
       <div className="app-main">
         <TopBar onOpenDrawer={() => setDrawerOpen(true)} />
+        <WorkspaceBanners />
         <main id="main-content" className="page-content">
           {children}
         </main>
@@ -440,6 +442,78 @@ function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
         </Link>
       </div>
     </header>
+  );
+}
+
+const DISMISSED_KEY = "messmate:dismissed-announcements";
+
+/**
+ * A suspended mess, and anything the platform team has announced. An
+ * announcement can be dismissed per browser; suspension cannot, because every
+ * change in the mess will be refused until it is lifted.
+ */
+function WorkspaceBanners() {
+  const { data } = useWorkspace();
+  // Unknown until the browser has been asked, so a dismissed banner never
+  // flashes up during hydration.
+  const [dismissed, setDismissed] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const stored = JSON.parse(window.localStorage.getItem(DISMISSED_KEY) ?? "[]");
+        setDismissed(Array.isArray(stored) ? stored.filter((id) => typeof id === "string") : []);
+      } catch {
+        setDismissed([]);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  const dismiss = (id: string) => {
+    // Only ids still running are kept, so the list cannot grow forever.
+    const live = new Set(data.announcements.map((item) => item.id));
+    const next = [...(dismissed ?? []).filter((item) => live.has(item)), id];
+    setDismissed(next);
+    try {
+      window.localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
+    } catch {
+      // Storage can be unavailable; it stays dismissed for this visit.
+    }
+  };
+
+  const visible = dismissed
+    ? data.announcements.filter((item) => !dismissed.includes(item.id))
+    : [];
+  if (!data.workspace.suspended && visible.length === 0) return null;
+
+  return (
+    <div className="workspace-banners">
+      {data.workspace.suspended && (
+        <div className="workspace-banner danger" role="alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <div>
+            <strong>This mess is read-only.</strong>
+            <p>
+              The MessMate team has suspended it, so nothing can be added or changed for now. Your
+              records are safe, and your private money page still works.
+            </p>
+          </div>
+        </div>
+      )}
+      {visible.map((item) => (
+        <div key={item.id} className={`workspace-banner ${item.tone}`} role="status">
+          <Megaphone size={18} aria-hidden="true" />
+          <div>
+            <strong>{item.title}</strong>
+            {item.body && <p>{item.body}</p>}
+          </div>
+          <button type="button" onClick={() => dismiss(item.id)} aria-label={`Dismiss “${item.title}”`}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 

@@ -6,6 +6,7 @@ import {
   ImageIcon,
   LockKeyhole,
   PackageCheck,
+  Pencil,
   Plus,
   Search,
   ShoppingBasket,
@@ -17,6 +18,7 @@ import { downloadCsv, formatDate, formatMoney, pluralize } from "@/lib/format";
 import { periodLabel } from "@/lib/period";
 import type { BazarEntry } from "@/lib/types";
 import { ActionButton, Avatar, EmptyState, Modal, SectionHeading } from "@/components/ui";
+import { AddBazarModal } from "@/components/entry-modals";
 import { useWorkspace } from "@/components/workspace-context";
 
 const ROSTER_LABEL: Record<string, string> = {
@@ -31,6 +33,7 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [receipt, setReceipt] = useState<BazarEntry | null>(null);
+  const [editing, setEditing] = useState<BazarEntry | null>(null);
   const closed = data.closure.status === "closed";
 
   const memberById = new Map(data.members.map((member) => [member.id, member]));
@@ -242,6 +245,18 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
                       {(isManager || mine) && !closed && (
                         <button
                           type="button"
+                          className="icon-action"
+                          disabled={busy}
+                          title="Edit this entry"
+                          aria-label={`Edit ${entry.by}'s entry of ${formatMoney(entry.amount)}`}
+                          onClick={() => setEditing(entry)}
+                        >
+                          <Pencil size={15} aria-hidden="true" />
+                        </button>
+                      )}
+                      {(isManager || mine) && !closed && (
+                        <button
+                          type="button"
                           className="icon-action danger"
                           disabled={busy}
                           title="Remove this entry"
@@ -321,6 +336,9 @@ export function BazarView({ onAddBazar }: { onAddBazar: () => void }) {
             ))}
           </ul>
         </Modal>
+      )}
+      {editing && !closed && (
+        <AddBazarModal key={editing.id} entry={editing} onClose={() => setEditing(null)} />
       )}
     </>
   );

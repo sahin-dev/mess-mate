@@ -12,7 +12,12 @@ import {
 } from "@/lib/money";
 import type {
   ActivityItem,
+  Announcement,
+  AnnouncementAudience,
+  AnnouncementBanner,
   BazarEntry,
+  ListingReportReason,
+  Notice,
   Expense,
   Facility,
   Listing,
@@ -134,6 +139,35 @@ export type BazarDocument = Omit<BazarEntry, "hasProof"> & {
   proof?: { name: string; type: string; data: string };
 };
 export type ActivityDocument = ActivityItem & { messId: string };
+export type NoticeDocument = Notice & { messId: string };
+export type AnnouncementDocument = Announcement & { createdById: string; updatedAt: string };
+export type ListingReportDocument = {
+  id: string;
+  listingId: string;
+  messId: string;
+  reason: ListingReportReason;
+  details: string;
+  /** Optional, so the platform team can follow up. Never shown to the poster. */
+  contact: string;
+  /** Hashed caller key, so one person cannot file the same report repeatedly. */
+  reporterKey: string;
+  status: "open" | "actioned" | "dismissed";
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+};
+/** Every change a platform administrator makes, kept for accountability. */
+export type AdminAuditDocument = {
+  id: string;
+  actorId: string;
+  actorName: string;
+  action: string;
+  targetType: "user" | "mess" | "listing" | "report" | "announcement" | "platform";
+  targetId: string | null;
+  targetLabel: string;
+  detail: string;
+  createdAt: string;
+};
 
 export const MEMBER_COLORS = [
   "#c9603f",
@@ -210,7 +244,51 @@ export async function ensureIndexes(db: Db) {
     // Avatars are fetched by id when serving, and by user when replacing one.
     db.collection("avatars").createIndex({ id: 1 }, { unique: true }),
     db.collection("avatars").createIndex({ userId: 1 }),
+    db.collection("notices").createIndex({ messId: 1, pinned: -1, createdAt: -1 }),
+    db.collection("notices").createIndex({ id: 1 }, { unique: true }),
+    db.collection("announcements").createIndex({ id: 1 }, { unique: true }),
+    db.collection("announcements").createIndex({ startsAt: -1 }),
+    db.collection("listingReports").createIndex({ id: 1 }, { unique: true }),
+    db.collection("listingReports").createIndex({ status: 1, createdAt: -1 }),
+    db.collection("listingReports").createIndex({ listingId: 1, reporterKey: 1 }),
+    db.collection("adminAudit").createIndex({ createdAt: -1 }),
+    db.collection("adminAudit").createIndex({ targetId: 1, createdAt: -1 }),
   ]);
+}
+
+/**
+ * `ensureIndexes` issues around forty createIndex calls. They are idempotent,
+ * but there is no reason to send them on every sign-in: once per process is
+ * enough, and a failure clears the flag so the next request tries again.
+ */
+let indexesReady: Promise<void> | null = null;
+
+export function ensureIndexesOnce(db: Db) {
+  if (!indexesReady) {
+    indexesReady = ensureIndexes(db).catch((error) => {
+      indexesReady = null;
+      throw error;
+    });
+  }
+  return indexesReady;
+}
+
+/** Announcements running now, for one viewer. */
+export async function loadAnnouncements(db: Db, role: UserRole | null): Promise<AnnouncementBanner[]> {
+  const now = new Date().toISOString();
+  const audiences: AnnouncementAudience[] =
+    role === "manager" || role === "admin" ? ["everyone", "managers"] : ["everyone"];
+  const rows = await db
+    .collection<AnnouncementDocument>("announcements")
+    .find({
+      startsAt: { $lte: now },
+      $or: [{ endsAt: null }, { endsAt: { $gt: now } }],
+      audience: { $in: audiences },
+    })
+    .sort({ startsAt: -1 })
+    .limit(3)
+    .toArray();
+  return rows.map((row) => ({ id: row.id, title: row.title, body: row.body, tone: row.tone }));
 }
 
 /** Matches an `YYYY-MM-DD` date field against one `YYYY-MM` period. */
@@ -243,6 +321,8 @@ export async function getWorkspaceData(
     moneyBudgets,
     closureDocument,
     settlementPayments,
+    notices,
+    announcements,
   ] =
     await Promise.all([
       db.collection<MemberDocument>("members").find({ messId }).sort({ joinedAt: 1 }).toArray(),
@@ -288,6 +368,13 @@ export async function getWorkspaceData(
         .collection<SettlementPaymentDocument>("settlementPayments")
         .find({ messId, period, status: "paid" })
         .toArray(),
+      db
+        .collection<NoticeDocument>("notices")
+        .find({ messId })
+        .sort({ pinned: -1, createdAt: -1 })
+        .limit(20)
+        .toArray(),
+      loadAnnouncements(db, role),
     ]);
 
   // A member row belongs to the mess; the phone number and picture belong to
@@ -477,6 +564,17 @@ export async function getWorkspaceData(
       : { status: "open", closedAt: null, closedBy: null },
     money,
     trend,
+    notices: notices.map((notice) => ({
+      id: notice.id,
+      title: notice.title,
+      body: notice.body,
+      pinned: notice.pinned,
+      authorId: notice.authorId,
+      authorName: notice.authorName,
+      createdAt: notice.createdAt,
+      updatedAt: notice.updatedAt,
+    })),
+    announcements,
     roster: buildRoster(
       memberDocs.map((member) => ({
         ...member,
@@ -657,7 +755,7 @@ function seeded(key: string, max: number) {
 }
 
 export async function ensureDemoData(db: Db) {
-  await ensureIndexes(db);
+  await ensureIndexesOnce(db);
   const [managerPassword, adminPassword] = await Promise.all([
     hashPassword("demo12345", "messmate-manager-demo"),
     hashPassword("admin12345", "messmate-admin-demo"),

@@ -21,6 +21,7 @@ import { FURNISHING_LABEL, PARKING_LABEL, propertySummary, roomHighlights } from
 import { photoUrl } from "@/lib/listing-post";
 import { loadPublishedListing, type PublicListing } from "@/lib/public-listings";
 import { MapView } from "@/components/map-picker";
+import { ReportListing } from "@/components/report-listing";
 
 export const revalidate = 300;
 
@@ -313,6 +314,7 @@ export default async function ListingPage({ params }: { params: Promise<{ slug: 
             {listing.publishedAt && (
               <p className="listing-published">Listed {formatDate(listing.publishedAt.slice(0, 10))}</p>
             )}
+            <ReportListing slug={slug} />
           </section>
         </aside>
       </div>

@@ -55,6 +55,28 @@ const indexes = [
   ["listings", { status: 1, publishedAt: -1 }, {}],
   ["listingPhotos", { id: 1 }, { unique: true }],
   ["listingPhotos", { listingId: 1 }, {}],
+  ["users", { lastSeenAt: -1 }, {}],
+  ["members", { messId: 1, id: 1 }, { unique: true }],
+  ["settlementClosures", { messId: 1, period: 1 }, { unique: true }],
+  [
+    "settlementPayments",
+    { messId: 1, period: 1, fromId: 1, toId: 1, amount: 1 },
+    { unique: true },
+  ],
+  ["moneyTransactions", { userId: 1, date: -1 }, {}],
+  ["moneyTransactions", { id: 1 }, { unique: true }],
+  ["moneyBudgets", { userId: 1, period: 1, category: 1 }, { unique: true }],
+  ["avatars", { id: 1 }, { unique: true }],
+  ["avatars", { userId: 1 }, {}],
+  ["notices", { messId: 1, pinned: -1, createdAt: -1 }, {}],
+  ["notices", { id: 1 }, { unique: true }],
+  ["announcements", { id: 1 }, { unique: true }],
+  ["announcements", { startsAt: -1 }, {}],
+  ["listingReports", { id: 1 }, { unique: true }],
+  ["listingReports", { status: 1, createdAt: -1 }, {}],
+  ["listingReports", { listingId: 1, reporterKey: 1 }, {}],
+  ["adminAudit", { createdAt: -1 }, {}],
+  ["adminAudit", { targetId: 1, createdAt: -1 }, {}],
 ];
 
 const client = await connect();

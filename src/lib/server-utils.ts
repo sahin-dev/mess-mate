@@ -37,6 +37,9 @@ export type UserDocument = {
   /** Last time this account made a request. Absent until they next visit. */
   lastSeenAt?: string;
   updatedAt?: string;
+  /** Set by a platform administrator. A suspended account cannot sign in. */
+  suspendedAt?: string | null;
+  suspendedReason?: string;
 };
 
 export type SessionDocument = {
@@ -60,6 +63,12 @@ export type MessDocument = {
   /** Both added later, so both are optional on stored documents. */
   property?: Record<string, unknown>;
   facilities?: unknown[];
+  /**
+   * Set by a platform administrator. A suspended mess stays readable to its
+   * members, so nobody loses their records, but nothing in it can be changed.
+   */
+  suspendedAt?: string | null;
+  suspendedReason?: string;
 };
 
 export class ApiError extends Error {
@@ -221,6 +230,12 @@ export async function readSession() {
   if (!session) return null;
   const user = await db.collection<UserDocument>("users").findOne({ id: session.userId });
   if (!user) return null;
+  // Suspension ends every session when it is applied; this also catches a
+  // session created in the instant between, or one restored from a backup.
+  if (user.suspendedAt) {
+    await db.collection<SessionDocument>("sessions").deleteMany({ userId: user.id });
+    return null;
+  }
   // A session stores the last selected workspace for navigation, not an
   // authorization grant. Re-check the live membership on every authenticated
   // request so a removed or demoted account cannot keep stale access.
@@ -294,6 +309,36 @@ export async function requireWorkspace() {
   return { ...auth, mess, role: auth.session.role };
 }
 
+/** Thrown before any change to a mess that a platform administrator has suspended. */
+export function assertMessWritable(mess: MessDocument) {
+  if (mess.suspendedAt) {
+    throw new ApiError(
+      423,
+      "This mess has been suspended by the platform team, so it is read-only for now. Your records are safe.",
+    );
+  }
+}
+
+/**
+ * The app keeps one live membership per account: the session, the settlement
+ * and every workspace page assume it. Creating, joining or being admitted to a
+ * second mess is refused rather than silently splitting someone across two.
+ */
+export async function assertNoOtherActiveMess(db: Db, userId: string, exceptMessId?: string) {
+  const other = await db
+    .collection<{ messId: string }>("members")
+    .findOne(
+      { userId, status: "active", ...(exceptMessId ? { messId: { $ne: exceptMessId } } : {}) },
+      { projection: { messId: 1 } },
+    );
+  if (other) {
+    throw new ApiError(
+      409,
+      "This account already belongs to a mess. Leave it before creating or joining another one.",
+    );
+  }
+}
+
 export function requireManager(role: UserRole) {
   if (role !== "manager" && role !== "admin") {
     throw new ApiError(403, "Only a mess manager can do that.");
@@ -323,6 +368,9 @@ export async function workspaceFor(
     userVisibility: mergeVisibility(user.visibility),
     userAvatarId: user.avatarId ?? null,
     memberCount,
+    isOwner: mess.managerId === user.id,
+    ownerId: mess.managerId,
+    suspended: Boolean(mess.suspendedAt),
   };
 }
 
