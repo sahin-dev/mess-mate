@@ -14,7 +14,7 @@ import {
   Trash2,
   Utensils,
 } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { formatMoney } from "@/lib/format";
 import {
   browserTimezone,
@@ -74,6 +74,17 @@ function SettingsForm({ serverSnapshot, initialTab }: { serverSnapshot: string; 
 
   const dirty = JSON.stringify(settings) !== serverSnapshot;
   const patch = (changes: Partial<MessSettings>) => setSettings({ ...settings, ...changes });
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % TABS.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + TABS.length) % TABS.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = TABS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+    setTab(TABS[nextIndex].id);
+  };
 
   const save = async () => {
     const result = await runAction("saveSettings", { settings }, "Mess settings saved.");
@@ -100,15 +111,17 @@ function SettingsForm({ serverSnapshot, initialTab }: { serverSnapshot: string; 
       />
 
       <div className="settings-nav" role="tablist" aria-label="Settings sections">
-        {TABS.map((item) => (
+        {TABS.map((item, index) => (
           <button
             key={item.id}
             type="button"
             role="tab"
             id={`tab-${item.id}`}
             aria-selected={tab === item.id}
-            aria-controls={`panel-${item.id}`}
+            aria-controls={tab === item.id ? `panel-${item.id}` : undefined}
+            tabIndex={tab === item.id ? 0 : -1}
             className={tab === item.id ? "active" : ""}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
             onClick={() => setTab(item.id)}
           >
             {item.label}
@@ -116,7 +129,7 @@ function SettingsForm({ serverSnapshot, initialTab }: { serverSnapshot: string; 
         ))}
       </div>
 
-      <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
+      <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={0}>
         {tab === "general" && (
           <section className="panel settings-section">
             <div className="settings-heading">

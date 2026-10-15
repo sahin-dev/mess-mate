@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { formatDate, initialsOf, relativeTime } from "@/lib/format";
 import { PresencePing } from "@/components/presence-ping";
 import { AddBazarModal, AddExpenseModal } from "@/components/entry-modals";
@@ -40,6 +40,7 @@ import {
   ConfirmDialog,
   EmptyState,
   Modal,
+  useDrawerAccessibility,
   type ConfirmRequest,
 } from "@/components/ui";
 import {
@@ -102,19 +103,18 @@ function ShellChrome({ children }: { children: ReactNode }) {
   const router = useRouter();
   const periodHref = usePeriodHref();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const drawerTriggerRef = useRef<HTMLElement | null>(null);
   const { workspace } = data;
   // Navigation closes the drawer at the click, rather than reacting to the
   // route afterwards, so there is no extra render between the two.
-  const closeDrawer = () => setDrawerOpen(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  useDrawerAccessibility(drawerOpen, drawerRef, drawerTriggerRef, closeDrawer);
 
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDrawerOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [drawerOpen]);
+  const openDrawer = (trigger: HTMLElement | null) => {
+    drawerTriggerRef.current = trigger;
+    setDrawerOpen(true);
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -153,6 +153,14 @@ function ShellChrome({ children }: { children: ReactNode }) {
         : href === "/members" && isManager
           ? joinRequests
           : 0;
+  const badgeLabelFor = (href: string) =>
+    href === "/bazar" && !isManager
+      ? `${badgeFor(href)} of your bazar entries awaiting approval`
+      : href === "/bazar"
+        ? `${badgeFor(href)} bazar entries awaiting approval`
+        : href === "/meals"
+          ? `${badgeFor(href)} meal entries awaiting approval`
+          : `${badgeFor(href)} join requests awaiting review`;
   const visibleNav = navItems.filter((item) => !item.managerOnly || isManager);
 
   return (
@@ -165,10 +173,18 @@ function ShellChrome({ children }: { children: ReactNode }) {
         className={`sidebar-overlay ${drawerOpen ? "show" : ""}`}
         onClick={() => setDrawerOpen(false)}
         aria-label="Close navigation"
-        tabIndex={drawerOpen ? 0 : -1}
+        aria-hidden="true"
+        tabIndex={-1}
       />
 
-      <aside className={`sidebar ${drawerOpen ? "open" : ""}`} aria-label="Main navigation">
+      <aside
+        ref={drawerRef}
+        id="workspace-navigation"
+        className={`sidebar ${drawerOpen ? "open" : ""}`}
+        role={drawerOpen ? "dialog" : undefined}
+        aria-label="Main navigation"
+        aria-modal={drawerOpen ? true : undefined}
+      >
         <div className="sidebar-top">
           <Link className="brand" href="/" aria-label="MessMate home">
             <span className="brand-mark" aria-hidden="true">
@@ -211,20 +227,13 @@ function ShellChrome({ children }: { children: ReactNode }) {
                     href={periodHref(href)}
                     className={active ? "active" : ""}
                     aria-current={active ? "page" : undefined}
+                    aria-label={badgeFor(href) > 0 ? `${label}, ${badgeLabelFor(href)}` : undefined}
                     onClick={closeDrawer}
                   >
                     <Icon size={18} aria-hidden="true" />
                     <span>{label}</span>
                     {badgeFor(href) > 0 && (
-                      <i
-                        aria-label={
-                          href === "/bazar" && !isManager
-                            ? `${badgeFor(href)} of your entries awaiting approval`
-                            : `${badgeFor(href)} awaiting attention`
-                        }
-                      >
-                        {badgeFor(href)}
-                      </i>
+                      <i>{badgeFor(href)}</i>
                     )}
                   </Link>
                 </li>
@@ -308,7 +317,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="app-main">
-        <TopBar onOpenDrawer={() => setDrawerOpen(true)} />
+        <TopBar onOpenDrawer={openDrawer} drawerOpen={drawerOpen} />
         <WorkspaceBanners />
         <main id="main-content" className="page-content">
           {children}
@@ -326,6 +335,7 @@ function ShellChrome({ children }: { children: ReactNode }) {
                 href={periodHref(href)}
                 className={active ? "active" : ""}
                 aria-current={active ? "page" : undefined}
+                aria-label={badgeFor(href) > 0 ? `${label}, ${badgeLabelFor(href)}` : undefined}
                 onClick={closeDrawer}
               >
                 <Icon size={19} aria-hidden="true" />
@@ -334,7 +344,12 @@ function ShellChrome({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
-        <button type="button" onClick={() => setDrawerOpen(true)}>
+        <button
+          type="button"
+          aria-controls="workspace-navigation"
+          aria-expanded={drawerOpen}
+          onClick={(event) => openDrawer(event.currentTarget)}
+        >
           <MoreHorizontal size={19} aria-hidden="true" />
           <span>More</span>
         </button>
@@ -343,7 +358,13 @@ function ShellChrome({ children }: { children: ReactNode }) {
   );
 }
 
-function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
+function TopBar({
+  onOpenDrawer,
+  drawerOpen,
+}: {
+  onOpenDrawer: (trigger: HTMLElement) => void;
+  drawerOpen: boolean;
+}) {
   const { data, openPanel, panel, setPeriod, switchingPeriod } = useWorkspace();
   const pathname = usePathname();
   const periodHref = usePeriodHref();
@@ -394,7 +415,13 @@ function TopBar({ onOpenDrawer }: { onOpenDrawer: () => void }) {
   return (
     <header className="topbar">
       <div className="headline-wrap">
-        <button className="mobile-menu icon-button" onClick={onOpenDrawer} aria-label="Open navigation">
+        <button
+          className="mobile-menu icon-button"
+          aria-controls="workspace-navigation"
+          aria-expanded={drawerOpen}
+          onClick={(event) => onOpenDrawer(event.currentTarget)}
+          aria-label="Open navigation"
+        >
           <Menu size={21} aria-hidden="true" />
         </button>
         <div>

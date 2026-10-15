@@ -855,6 +855,31 @@ select:disabled {
 .month-state-banner.closed { color: var(--warning-ink); background: var(--warning-bg); border-color: transparent; }
 .month-state-banner.closed strong { color: var(--warning-ink); }
 
+.draft-recovery-banner {
+  margin-bottom: 16px;
+  padding: 13px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--coral) 30%, var(--line));
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  background: var(--coral-soft);
+}
+
+.draft-recovery-banner > div { min-width: 0; display: flex; align-items: flex-start; gap: 10px; }
+.draft-recovery-banner > div > svg { flex: 0 0 auto; margin-top: 2px; color: var(--coral-ink); }
+.draft-recovery-banner span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.draft-recovery-banner strong { color: var(--ink); font-size: var(--text-sm); }
+.draft-recovery-banner small { color: var(--ink-soft); font-size: var(--text-xs); line-height: 1.5; }
+.draft-recovery-banner .button { flex: 0 0 auto; }
+
+@media (max-width: 560px) {
+  .draft-recovery-banner { align-items: flex-start; flex-direction: column; }
+  .draft-recovery-banner .button { align-self: flex-end; }
+}
+
 .quick-add-button { padding-right: 9px; }
 
 .quick-add-button kbd {
@@ -3711,13 +3736,18 @@ div.money-side-empty .button { width: max-content; }
   .sidebar,
   .admin-sidebar {
     width: min(300px, 86vw);
+    visibility: hidden;
     transform: translateX(-102%);
-    transition: transform 0.22s ease;
+    transition: transform 0.22s ease, visibility 0s linear 0.22s;
     box-shadow: var(--shadow-lg);
   }
 
   .sidebar.open,
-  .admin-sidebar.open { transform: none; }
+  .admin-sidebar.open {
+    visibility: visible;
+    transform: none;
+    transition: transform 0.22s ease, visibility 0s;
+  }
 
   .sidebar-quick {
     width: 100%;

@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { PresencePing } from "@/components/presence-ping";
 import { downloadCsv, formatDate, formatMoney, pluralize, relativeTime } from "@/lib/format";
 import type {
@@ -58,7 +58,7 @@ import type {
   AnnouncementTone,
   ListingReportReason,
 } from "@/lib/types";
-import { ActionButton, Avatar, ConfirmDialog, EmptyState, Modal, Spinner, type ConfirmRequest } from "@/components/ui";
+import { ActionButton, Avatar, ConfirmDialog, EmptyState, Modal, Spinner, useDrawerAccessibility, type ConfirmRequest } from "@/components/ui";
 import { requestJson } from "@/components/workspace-context";
 import { isAdminView, type AdminView } from "@/lib/admin-views";
 
@@ -182,6 +182,8 @@ export function AdminPortal({ userName, initialView }: { userName: string; initi
   const router = useRouter();
   const [view, setView] = useState<AdminView>(initialView);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const drawerTriggerRef = useRef<HTMLElement | null>(null);
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -189,6 +191,13 @@ export function AdminPortal({ userName, initialView }: { userName: string; initi
   const [reasonRequest, setReasonRequest] = useState<ReasonRequest | null>(null);
   const toastId = useRef(0);
   const overview = useAdminQuery<AdminOverview>("/api/admin?view=overview", version);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  useDrawerAccessibility(drawerOpen, drawerRef, drawerTriggerRef, closeDrawer);
+
+  const openDrawer = (trigger: HTMLElement) => {
+    drawerTriggerRef.current = trigger;
+    setDrawerOpen(true);
+  };
 
   const notify = useCallback((message: string, tone: Toast["tone"] = "success") => {
     toastId.current += 1;
@@ -236,15 +245,6 @@ export function AdminPortal({ userName, initialView }: { userName: string; initi
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDrawerOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [drawerOpen]);
-
   const signOut = async () => {
     try {
       await requestJson<{ ok: boolean }>("/api/auth", { action: "signout" });
@@ -275,12 +275,20 @@ export function AdminPortal({ userName, initialView }: { userName: string; initi
       </a>
       <button
         className={`admin-overlay ${drawerOpen ? "show" : ""}`}
-        onClick={() => setDrawerOpen(false)}
+        onClick={closeDrawer}
         aria-label="Close navigation"
-        tabIndex={drawerOpen ? 0 : -1}
+        aria-hidden="true"
+        tabIndex={-1}
       />
 
-      <aside className={`admin-sidebar ${drawerOpen ? "open" : ""}`} aria-label="Admin navigation">
+      <aside
+        ref={drawerRef}
+        id="admin-navigation"
+        className={`admin-sidebar ${drawerOpen ? "open" : ""}`}
+        role={drawerOpen ? "dialog" : undefined}
+        aria-label="Admin navigation"
+        aria-modal={drawerOpen ? true : undefined}
+      >
         <div className="sidebar-top">
           <Link className="admin-brand" href="/admin" aria-label="MessMate admin home">
             <span className="brand-mark" aria-hidden="true">
@@ -291,7 +299,7 @@ export function AdminPortal({ userName, initialView }: { userName: string; initi
               <small>Platform administration</small>
             </span>
           </Link>
-          <button className="drawer-close icon-button" onClick={() => setDrawerOpen(false)} aria-label="Close navigation">
+          <button className="drawer-close icon-button" onClick={closeDrawer} aria-label="Close navigation">
             <X size={18} aria-hidden="true" />
           </button>
         </div>
@@ -309,12 +317,13 @@ export function AdminPortal({ userName, initialView }: { userName: string; initi
                       type="button"
                       className={view === id ? "active" : ""}
                       aria-current={view === id ? "page" : undefined}
+                      aria-label={(badges[id] ?? 0) > 0 ? `${label}, ${badges[id]} need attention` : undefined}
                       onClick={() => openView(id)}
                     >
                       <Icon size={18} aria-hidden="true" />
                       <span>{label}</span>
                       {(badges[id] ?? 0) > 0 && (
-                        <i className="admin-nav-badge" aria-label={`${badges[id]} need attention`}>
+                        <i className="admin-nav-badge">
                           {badges[id]}
                         </i>
                       )}
@@ -350,7 +359,13 @@ export function AdminPortal({ userName, initialView }: { userName: string; initi
       <div className="admin-main">
         <header className="admin-topbar">
           <div className="headline-wrap">
-            <button className="admin-menu icon-button" onClick={() => setDrawerOpen(true)} aria-label="Open navigation">
+            <button
+              className="admin-menu icon-button"
+              aria-controls="admin-navigation"
+              aria-expanded={drawerOpen}
+              onClick={(event) => openDrawer(event.currentTarget)}
+              aria-label="Open navigation"
+            >
               <Menu size={20} aria-hidden="true" />
             </button>
             <div>
@@ -1414,28 +1429,49 @@ function MessDrawer({ id, ctx, onClose }: { id: string; ctx: AdminContext; onClo
 
 function ListingsView({ ctx }: { ctx: AdminContext }) {
   const [tab, setTab] = useState<"reports" | "posts">("reports");
+  const tabs = [
+    ["reports", "Reports"],
+    ["posts", "All posts"],
+  ] as const;
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+    setTab(tabs[nextIndex][0]);
+  };
   return (
     <>
       <div className="settings-nav admin-tabs" role="tablist" aria-label="Listing moderation">
-        {(
-          [
-            ["reports", "Reports"],
-            ["posts", "All posts"],
-          ] as const
-        ).map(([id, label]) => (
+        {tabs.map(([id, label], index) => (
           <button
             key={id}
             type="button"
             role="tab"
+            id={`moderation-tab-${id}`}
             aria-selected={tab === id}
+            aria-controls="listing-moderation-panel"
+            tabIndex={tab === id ? 0 : -1}
             className={tab === id ? "active" : ""}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
             onClick={() => setTab(id)}
           >
             {label}
           </button>
         ))}
       </div>
-      {tab === "reports" ? <ReportsPanel ctx={ctx} /> : <PostsPanel ctx={ctx} />}
+      <div
+        id="listing-moderation-panel"
+        role="tabpanel"
+        aria-labelledby={`moderation-tab-${tab}`}
+        tabIndex={0}
+      >
+        {tab === "reports" ? <ReportsPanel ctx={ctx} /> : <PostsPanel ctx={ctx} />}
+      </div>
     </>
   );
 }

@@ -12,7 +12,7 @@ import {
   UserCog,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { downloadCsv, formatDate, formatMoney, pluralize } from "@/lib/format";
 import { daysInPeriod, periodLabel } from "@/lib/period";
@@ -75,10 +75,53 @@ export function MealsView() {
     subjectId: string;
     days: Record<string, Counts>;
   }>({ period: data.period, subjectId, days: {} });
+  const draftStorageKey = `messmate:meal-drafts:${data.workspace.messId}:${data.workspace.userId}:${data.period}:${subjectId}`;
+  const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
+  const [recoveredDraftKey, setRecoveredDraftKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    let restoredDays: Record<string, Counts> = {};
+    try {
+      const raw = window.sessionStorage.getItem(draftStorageKey);
+      if (raw) {
+        const stored = JSON.parse(raw) as {
+          period?: unknown;
+          subjectId?: unknown;
+          days?: unknown;
+        };
+        if (
+          stored.period === data.period &&
+          stored.subjectId === subjectId &&
+          stored.days &&
+          typeof stored.days === "object" &&
+          !Array.isArray(stored.days)
+        ) {
+          restoredDays = Object.fromEntries(
+            Object.entries(stored.days).filter(([date, counts]) => {
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !date.startsWith(`${data.period}-`)) return false;
+              if (!counts || typeof counts !== "object") return false;
+              const entry = counts as Partial<Counts>;
+              return ALL_KEYS.every(
+                (key) => Number.isInteger(entry[key]) && (entry[key] ?? -1) >= 0 && (entry[key] ?? 10) <= 9,
+              );
+            }),
+          ) as Record<string, Counts>;
+        }
+      }
+    } catch {
+      // Storage can be disabled or contain an incomplete draft; start clean.
+    }
+    startTransition(() => {
+      setDraftState({ period: data.period, subjectId, days: restoredDays });
+      setRecoveredDraftKey(Object.keys(restoredDays).length > 0 ? draftStorageKey : null);
+      setHydratedDraftKey(draftStorageKey);
+    });
+  }, [data.period, data.workspace.messId, data.workspace.userId, draftStorageKey, subjectId]);
+
   // Drafts belong to one month and one person; changing either discards them
-  // by mismatch rather than by clearing them from an effect.
+  // from this view while keeping a recoverable copy in this browser tab.
   const draftsMatch = draftState.period === data.period && draftState.subjectId === subjectId;
-  const drafts = draftsMatch ? draftState.days : {};
+  const drafts = useMemo(() => (draftsMatch ? draftState.days : {}), [draftsMatch, draftState.days]);
   const setDrafts = (days: Record<string, Counts>) =>
     setDraftState({ period: data.period, subjectId, days });
   const [savingDate, setSavingDate] = useState<string | null>(null);
@@ -127,9 +170,12 @@ export function MealsView() {
         () => setRecentlySaved((current) => current.filter((entry) => entry !== date)),
         2500,
       );
-      const remaining = { ...drafts };
-      delete remaining[date];
-      setDrafts(remaining);
+      setDraftState((current) => {
+        if (current.period !== data.period || current.subjectId !== subjectId) return current;
+        const remaining = { ...current.days };
+        delete remaining[date];
+        return { ...current, days: remaining };
+      });
     }
   };
 
@@ -145,6 +191,22 @@ export function MealsView() {
     const saved = savedByDate.get(date);
     return ALL_KEYS.some((key) => drafts[date][key] !== (saved?.[key] ?? 0));
   });
+
+  useEffect(() => {
+    if (hydratedDraftKey !== draftStorageKey) return;
+    try {
+      if (dirtyDates.length === 0) {
+        window.sessionStorage.removeItem(draftStorageKey);
+      } else {
+        window.sessionStorage.setItem(
+          draftStorageKey,
+          JSON.stringify({ period: data.period, subjectId, days: drafts }),
+        );
+      }
+    } catch {
+      // The server save still works when this browser cannot store a recovery copy.
+    }
+  }, [data.period, draftStorageKey, drafts, dirtyDates.length, hydratedDraftKey, subjectId]);
 
   const me = subject ?? data.members.find((member) => member.id === data.workspace.userId);
   const visible = days.slice(offset, offset + PAGE_SIZE);
@@ -205,6 +267,35 @@ export function MealsView() {
             <strong>Month closed</strong>
             <span>The settlement is frozen. A manager can reopen it from Expenses &amp; settlement.</span>
           </div>
+        </section>
+      )}
+
+      {recoveredDraftKey === draftStorageKey && dirtyDates.length > 0 && (
+        <section className="draft-recovery-banner" aria-live="polite">
+          <div>
+            <Clock3 size={18} aria-hidden="true" />
+            <span>
+              <strong>Unsaved meal edits restored</strong>
+              <small>
+                {pluralize(dirtyDates.length, "unsaved day", "unsaved days")} recovered from this browser. Save these edits to update the meal sheet.
+              </small>
+            </span>
+          </div>
+          <button
+            type="button"
+            className="button button-outline button-tiny"
+            onClick={() => {
+              try {
+                window.sessionStorage.removeItem(draftStorageKey);
+              } catch {
+                // Clearing the in-memory copy still works without browser storage.
+              }
+              setDraftState({ period: data.period, subjectId, days: {} });
+              setRecoveredDraftKey(null);
+            }}
+          >
+            Discard edits
+          </button>
         </section>
       )}
 

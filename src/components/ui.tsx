@@ -7,6 +7,7 @@ import {
   useId,
   useRef,
   useState,
+  type RefObject,
   type ReactNode,
 } from "react";
 import { avatarUrl } from "@/lib/avatar";
@@ -181,6 +182,60 @@ function useDialog(onClose: () => void) {
   }, [onClose]);
 
   return ref;
+}
+
+/** Keeps mobile navigation keyboard-accessible and restores the trigger on close. */
+export function useDrawerAccessibility(
+  open: boolean,
+  drawerRef: RefObject<HTMLElement | null>,
+  triggerRef: RefObject<HTMLElement | null>,
+  onClose: () => void,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const drawer = drawerRef.current;
+    const trigger = triggerRef.current;
+    const focusable = () =>
+      Array.from(
+        drawer?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((element) => element.getClientRects().length > 0);
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    (drawer?.querySelector<HTMLElement>(".drawer-close") ?? focusable()[0])?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const items = focusable();
+      if (!items.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !drawer?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !drawer?.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      trigger?.focus();
+    };
+  }, [drawerRef, onClose, open, triggerRef]);
 }
 
 export function Modal({
