@@ -56,8 +56,10 @@ technology.
 ## Production-readiness notes
 
 The codebase already has role-aware screens, error/loading fallbacks, a health
-endpoint, and financial review/closure states. This pass did not audit database
-recovery, deployment configuration, security controls, or operational
-monitoring. Before release, run the repository's type, lint, and production
-build checks, and add or run end-to-end checks for authentication, member
-permissions, financial edits, approvals, and settlement close/reopen.
+endpoint, and financial review/closure states. The wider engineering review is
+tracked in [`engineering-hardening-checklist.md`](./engineering-hardening-checklist.md).
+It has reviewed the source-level security and deployment boundaries and fixed
+request-body buffering, private-avatar caching, and unbounded rate-limit-map
+growth. Database recovery, live concurrency behavior, deployment proxy
+configuration, external email delivery, and operational monitoring still need
+environment-backed verification before release.

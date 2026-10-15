@@ -11,6 +11,9 @@ type Bucket = { count: number; resetAt: number };
 
 const buckets = new Map<string, Bucket>();
 let lastSweep = 0;
+// Keys include caller-controlled addresses on public endpoints. Bound memory
+// use even when an attacker rotates those addresses faster than buckets expire.
+const MAX_BUCKETS = 20_000;
 
 function sweep(now: number) {
   if (now - lastSweep < 60_000) return;
@@ -27,9 +30,17 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
   sweep(now);
   const bucket = buckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
+    if (buckets.size >= MAX_BUCKETS) {
+      const oldest = buckets.keys().next().value;
+      if (oldest !== undefined) buckets.delete(oldest);
+    }
     buckets.set(key, { count: 1, resetAt: now + windowMs });
     return { ok: true, retryAfter: 0 };
   }
+  // Keep active buckets recent so capacity pressure expires inactive callers
+  // first and the map behaves as a bounded LRU cache.
+  buckets.delete(key);
+  buckets.set(key, bucket);
   bucket.count += 1;
   if (bucket.count > limit) {
     return { ok: false, retryAfter: Math.ceil((bucket.resetAt - now) / 1000) };

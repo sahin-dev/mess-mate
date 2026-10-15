@@ -52,10 +52,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       headers: {
         "Content-Type": avatar.type,
         "Content-Length": String(avatar.bytes),
-        // A public picture may sit in a shared cache; anything narrower must
-        // not, or two members of different messes could be served each other's.
-        // Replacing a picture mints a new id, so a cached one is never stale.
-        "Cache-Control": level === "public" ? "public, max-age=3600" : "private, max-age=86400",
+        // A public picture may sit in a shared cache. A narrower visibility
+        // setting must take effect on the next request, so private/mess-scoped
+        // pictures are never retained by a browser cache after access changes.
+        "Cache-Control": level === "public" ? "public, max-age=3600" : "private, no-store",
         "X-Content-Type-Options": "nosniff",
         // A picture is never markup, so never let it run as any.
         "Content-Security-Policy": "default-src 'none'; sandbox",
